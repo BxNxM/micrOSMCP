@@ -1,52 +1,253 @@
 # micrOSMCP
 
-Standalone TypeScript MCP server for micrOS devices. It exposes device discovery, cache inspection, command execution, and command-surface discovery as Model Context Protocol tools.
+Standalone TypeScript MCP server and browser tester UI for micrOS devices. Use it to discover devices, inspect the device cache, run micrOS commands, and discover each device's available module commands.
 
-## What MCP Is
+## Quick Start
 
-MCP means Model Context Protocol. It is a protocol for connecting a client application to external tools and data sources.
-
-An MCP client can be an AI assistant, desktop app, IDE, or any program that understands MCP. The client starts an MCP server process, asks it which tools are available, and calls those tools with structured JSON arguments.
-
-For this project, MCP is the adapter layer between a client and micrOS devices:
-
-- The MCP client does not need to know the micrOS TCP protocol.
-- The MCP client sees named tools with JSON schemas.
-- The server owns device discovery, cache management, socket connections, prompt parsing, and command execution.
-- Tool responses are returned as text content containing formatted JSON.
-
-## Architecture
-
-The MCP server runs over stdio. The MCP client launches the server and communicates through standard input/output. The server then talks to micrOS devices over TCP:
-
-```text
-MCP client -> stdio -> micrOSMCP -> TCP socket -> micrOS device
+```sh
+npm install
+npm run build
+npm run start:ui
 ```
 
-The implementation mirrors the useful behavior of micrOS `socketClient.py` and `micrOSClient.py`, but it is standalone TypeScript and does not call Python.
+Open the printed URL, usually:
 
-Project structure:
+```text
+http://127.0.0.1:3333
+```
 
-- `src/index.ts`: minimal MCP stdio bootstrap.
-- `src/mcp-tools.ts`: MCP tool registration, names, descriptions, schemas, and response formatting.
-- `src/tools.ts`: collection barrel that re-exports the tool implementations.
-- `src/tools/`: individual tool implementations and reusable micrOS helpers.
-- `src/tools/common.ts`: shared device cache, socket client, discovery, parsing, and concurrency helpers.
-- `src/ui.ts`: local HTTP server for the browser tester UI.
-- `public/`: browser UI files for calling MCP tools without an AI client.
-- `scripts/start.mjs`: mode-aware starter for compiled MCP or UI entrypoints.
-- `data/device_conn_cache.json`: project-local micrOS device cache, created at runtime when needed.
-- `package.json`: npm scripts, package metadata, and the `microsmcp` binary entry.
+The UI is the easiest way to verify everything locally. It lists the MCP tools, renders their schemas as forms, keeps JSON arguments editable, and gives device dropdowns for device-targeted tools.
 
-Runtime flow for a tool call:
+## Use With An MCP Client
 
-1. MCP client calls a tool, for example `run_command`.
-2. `src/index.ts` starts the MCP server and registers tools through `src/mcp-tools.ts`.
-3. `src/mcp-tools.ts` validates input through the MCP SDK/Zod schema and calls the matching function from `src/tools.ts`.
-4. The matching file under `src/tools/` reads the cache, selects a device, opens a TCP socket if needed, and performs the micrOS operation.
-5. The result is serialized as formatted JSON text and returned to the MCP client.
+Build first:
 
-To add another tool, create a focused file under `src/tools/`, export it from `src/tools.ts`, then register its MCP schema in `src/mcp-tools.ts`. Shared micrOS behavior should stay in `src/tools/common.ts` only when it is useful to more than one tool.
+```sh
+npm install
+npm run build
+```
+
+Codex-style `config.toml`:
+
+```toml
+[mcp_servers.microsmcp]
+command = "npm"
+args = ["run", "--silent", "start"]
+cwd = "/Users/bnm/Development/micrOSMCP"
+```
+
+Generic JSON-style MCP config:
+
+```json
+{
+  "mcpServers": {
+    "microsmcp": {
+      "command": "npm",
+      "args": ["run", "--silent", "start"],
+      "cwd": "/Users/bnm/Development/micrOSMCP"
+    }
+  }
+}
+```
+
+Use `--silent` with npm in MCP client config so npm does not print lifecycle banners to stdout before the MCP protocol starts. The direct equivalent is:
+
+```json
+{
+  "mcpServers": {
+    "microsmcp": {
+      "command": "node",
+      "args": ["/Users/bnm/Development/micrOSMCP/scripts/start.mjs", "mcp"],
+      "cwd": "/Users/bnm/Development/micrOSMCP"
+    }
+  }
+}
+```
+
+## Commands
+
+```sh
+npm run help                  # Show start modes and environment variables
+npm run check                 # Build and sanity-check project entrypoints
+npm run build                 # Compile TypeScript into dist/
+npm run start                 # Start stdio MCP server from dist/
+npm run start -- ui           # Start UI from dist/ without rebuilding
+npm run start:mcp             # Explicit stdio MCP mode
+npm run start:ui              # Build, then start the browser tester UI
+npm run docker:build          # Build and export Docker image tar
+```
+
+Forwarded start help:
+
+```sh
+npm run start -- --help
+```
+
+Useful environment variables:
+
+```sh
+MICROS_DEVICE_CACHE_PATH=/path/to/device_conn_cache.json npm run start
+HOST=0.0.0.0 PORT=3333 npm run start -- ui
+```
+
+## Tools
+
+The MCP server exposes five tools.
+
+| Tool | Purpose |
+| --- | --- |
+| `list_devices` | Return cached micrOS devices. |
+| `filter_devices` | Filter cached devices by UID, FUID, IP, port, and optional live status. |
+| `discover_devices` | Scan a `/24` network, handshake with micrOS devices, and update the cache. |
+| `run_command` | Run a command or command pipeline on one selected device. |
+| `discover_commands` | Run `modules`, then `<module> help`, to map a device's command surface. |
+
+### `run_command`
+
+String pipeline using the micrOS `<a>` separator:
+
+```json
+{
+  "deviceTag": "TinyDevBoard",
+  "command": "version<a>conf webui"
+}
+```
+
+Array pipeline:
+
+```json
+{
+  "deviceTag": "TinyDevBoard",
+  "command": ["version", "conf webui"]
+}
+```
+
+Use read-only commands such as `version` for smoke tests. Other micrOS commands may change device state.
+
+### `discover_devices`
+
+```json
+{
+  "networkPrefix": "10.0.1",
+  "startHost": 2,
+  "endHost": 254,
+  "port": 9008,
+  "timeoutMs": 1000,
+  "concurrency": 50
+}
+```
+
+If `networkPrefix` is omitted, the server uses the active local IPv4 interface. In Docker Desktop, pass `networkPrefix` explicitly when automatic discovery sees the container network instead of your LAN.
+
+### `discover_commands`
+
+All cached devices:
+
+```json
+{}
+```
+
+One device by UID, FUID, IP, or partial device name:
+
+```json
+{
+  "deviceName": "TinyDevBoard"
+}
+```
+
+The response includes per-module raw help plus a flattened `commands` list:
+
+```json
+{
+  "module": "gameOfLife",
+  "function": "load",
+  "parameters": ["w=32", "h=16", "custom=None"],
+  "command": "gameOfLife load w=32 h=16 custom=None",
+  "signature": "load w=32 h=16 custom=None"
+}
+```
+
+`deviceTag` is accepted as an alias for `deviceName`. Use `password` if the device requires micrOS app authentication.
+
+## How Tools Are Defined
+
+MCP tools in this project have two layers:
+
+- **MCP definition layer:** `src/mcp-tools.ts`
+  This is where the tool name, title, description, Zod input schema, and MCP response formatting live.
+- **Implementation layer:** `src/tools/*.ts`
+  This is where the actual micrOS behavior lives. These files should be plain TypeScript functions that can be used from MCP, tests, scripts, or the UI bridge.
+
+`src/tools.ts` is only a collection barrel. It re-exports the tool functions and shared input/device types so `src/mcp-tools.ts` can import from one stable place.
+
+The rough call path is:
+
+```text
+MCP client
+  -> src/index.ts
+  -> registerMicrOSTools() in src/mcp-tools.ts
+  -> exported function from src/tools.ts
+  -> focused implementation in src/tools/<tool-name>.ts
+  -> shared micrOS helpers in src/tools/common.ts when needed
+```
+
+### Add A New Tool
+
+1. Create a focused implementation file under `src/tools/`, for example `src/tools/reboot-device.ts`.
+2. Add or reuse input types in `src/tools/common.ts`. Keep types close to shared helpers only when more than one file needs them.
+3. Export the function from `src/tools.ts`.
+4. Register the MCP tool in `src/mcp-tools.ts` with `server.registerTool(...)`.
+5. Add a short README entry in the tool table or tool examples.
+6. Run `npm run check`.
+
+Implementation example:
+
+```ts
+// src/tools/example-tool.ts
+import { cacheToDevices, readDeviceCache } from "./common.js";
+
+export type ExampleToolInput = {
+  query?: string;
+};
+
+export async function exampleTool(input: ExampleToolInput = {}) {
+  const cache = await readDeviceCache();
+  const devices = cacheToDevices(cache);
+
+  return {
+    query: input.query ?? null,
+    count: devices.length,
+    devices
+  };
+}
+```
+
+Barrel export:
+
+```ts
+// src/tools.ts
+export type { ExampleToolInput } from "./tools/example-tool.js";
+export { exampleTool } from "./tools/example-tool.js";
+```
+
+MCP registration example:
+
+```ts
+// src/mcp-tools.ts
+server.registerTool(
+  "example_tool",
+  {
+    title: "Example Tool",
+    description: "Describe what the tool does for MCP clients and humans.",
+    inputSchema: {
+      query: z.string().optional().describe("Optional filter text.")
+    }
+  },
+  async ({ query }) => textResult(await exampleTool({ query }))
+);
+```
+
+Tool responses should be JSON-serializable objects. If a tool can fail in a controlled way, prefer returning `{ ok: false, error: "..." }`; `src/mcp-tools.ts` marks those responses as MCP errors when appropriate.
 
 ## Device Cache
 
@@ -71,225 +272,116 @@ If the cache is missing or invalid, the server creates it with these defaults:
 
 The first cache read also attempts one automatic discovery and continues with whatever cache is available. Discovery is additive: it updates discovered devices but does not delete stale cached entries.
 
-Override the cache path:
+## Docker
+
+Build and export a standalone image:
 
 ```sh
-MICROS_DEVICE_CACHE_PATH=/path/to/device_conn_cache.json npm run start
+npm run docker:build
 ```
 
-## Tools
-
-The MCP server exposes five tools.
-
-### `list_devices`
-
-Returns the project-local cache.
-
-Arguments:
-
-```json
-{}
-```
-
-### `filter_devices`
-
-Filters cached devices by UID, FUID, IP, or port. It can optionally perform live online/offline checks.
-
-Example:
-
-```json
-{
-  "query": "Tiny",
-  "includeStatus": true
-}
-```
-
-### `discover_devices`
-
-Scans a `/24` network range, checks the micrOS TCP port, sends `hello`, parses UID/FUID, and updates the cache.
-
-Example:
-
-```json
-{
-  "networkPrefix": "10.0.1",
-  "startHost": 2,
-  "endHost": 254,
-  "port": 9008,
-  "timeoutMs": 1000,
-  "concurrency": 50
-}
-```
-
-If `networkPrefix` is omitted, the server uses the active local IPv4 interface.
-
-### `run_command`
-
-Selects a device by UID, FUID, or IP and runs a micrOS command pipeline over TCP.
-
-Command pipelines support the micrOS `<a>` separator:
-
-```json
-{
-  "deviceTag": "TinyDevBoard",
-  "command": "version<a>conf webui"
-}
-```
-
-Or an array:
-
-```json
-{
-  "deviceTag": "TinyDevBoard",
-  "command": ["version", "conf webui"]
-}
-```
-
-Use read-only commands such as `version` for smoke tests. Other micrOS commands may change device state.
-
-### `discover_commands`
-
-Discovers the available micrOS command surface for cached devices. It runs `modules`, parses the module list, then runs `<module> help` for each module.
-
-Discover commands on all cached devices:
-
-```json
-{}
-```
-
-Discover commands on one device by UID, FUID, IP, or partial device name:
-
-```json
-{
-  "deviceName": "TinyDevBoard"
-}
-```
-
-Optional arguments:
-
-```json
-{
-  "deviceName": "TinyDevBoard",
-  "timeout": 10,
-  "concurrency": 3
-}
-```
-
-`deviceTag` is also accepted as an alias for `deviceName`. Use `password` if the device requires micrOS app authentication.
-
-The response includes per-module raw help plus a flattened `commands` list:
-
-```json
-{
-  "module": "gameOfLife",
-  "function": "load",
-  "parameters": ["w=32", "h=16", "custom=None"],
-  "command": "gameOfLife load w=32 h=16 custom=None",
-  "signature": "load w=32 h=16 custom=None"
-}
-```
-
-## Install
-
-```sh
-npm install
-npm run build
-```
-
-Node.js `20` or newer is required.
-
-## Start The MCP Server
-
-Build first, then start the compiled stdio MCP server in a terminal:
-
-```sh
-npm run build
-npm run start
-```
-
-`npm run start` is equivalent to:
-
-```sh
-node scripts/start.mjs mcp
-```
-
-For MCP client configuration, prefer the direct starter or npm's silent mode so npm does not print lifecycle banners to stdout before the MCP protocol starts:
-
-```sh
-npm run --silent start
-```
-
-Other useful start commands:
-
-```sh
-npm run start:mcp
-npm run start:ui
-npm run ui
-```
-
-Use `node scripts/start.mjs mcp` or `npm run --silent start` from MCP client configuration. Use `npm run start:ui` when you want the local browser tester. The UI command builds first, then starts an HTTP tester that launches an internal MCP bridge.
-
-Development command:
-
-```sh
-npm run dev
-```
-
-`npm run dev` starts the TypeScript MCP server directly with `tsx`. It is useful while developing, but the compiled `npm run start` path is the safer choice for MCP client configuration.
-
-## Tester UI
-
-Run a local UI for testing tools without an AI client:
-
-```sh
-npm run start:ui
-```
-
-Open the printed URL, usually:
+Defaults:
 
 ```text
-http://127.0.0.1:3333
+image: microsmcp:latest
+export: dist/microsmcp-docker-image.tar.gz
 ```
 
-The UI renders parameter fields from MCP schemas, keeps an editable JSON payload in sync, and provides cached-device dropdowns for device-targeted tools.
+Customize:
 
-## MCP Client Config
-
-Codex-style MCP config:
-
-```toml
-[mcp_servers.microsmcp]
-command = "npm"
-args = ["run", "--silent", "start"]
-cwd = "/Users/bnm/Development/micrOSMCP"
+```sh
+npm run docker:build -- --image microsmcp:dev
+npm run docker:build -- --output dist/microsmcp.tar
+npm run docker:build -- --image microsmcp:dev --output dist/microsmcp-dev-docker-image.tar.gz
+npm run docker:build -- --no-export
 ```
 
-Generic JSON-style MCP config:
+Install an exported image on another machine:
+
+```sh
+docker load -i dist/microsmcp-docker-image.tar.gz
+```
+
+Run as stdio MCP:
+
+```sh
+docker run --rm -i microsmcp:latest mcp
+```
+
+Run the tester UI endpoint:
+
+```sh
+docker run --rm -p 3333:3333 microsmcp:latest ui
+```
+
+Persist the device cache:
+
+```sh
+docker volume create microsmcp-data
+docker run --rm -i -v microsmcp-data:/app/data microsmcp:latest mcp
+docker run --rm -p 3333:3333 -v microsmcp-data:/app/data microsmcp:latest ui
+```
+
+Docker network notes:
+
+- Direct commands to cached device IPs usually work if the container can route to your LAN.
+- Automatic `/24` discovery uses the container's network interface by default.
+- On Linux, `--network host` gives the container the host network view.
+- On Docker Desktop, pass `networkPrefix` explicitly to `discover_devices` when needed.
+- The UI binds to `0.0.0.0:3333` inside Docker, so `-p 3333:3333` exposes it on the host.
+
+Docker MCP client config:
 
 ```json
 {
   "mcpServers": {
     "microsmcp": {
-      "command": "npm",
-      "args": ["run", "--silent", "start"],
-      "cwd": "/Users/bnm/Development/micrOSMCP"
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "microsmcp:latest", "mcp"]
     }
   }
 }
 ```
 
-You can also call the starter directly:
+## Architecture
 
-```json
-{
-  "mcpServers": {
-    "microsmcp": {
-      "command": "node",
-      "args": ["/Users/bnm/Development/micrOSMCP/scripts/start.mjs", "mcp"],
-      "cwd": "/Users/bnm/Development/micrOSMCP"
-    }
-  }
-}
+MCP means Model Context Protocol. It lets a client application start this server, list available tools, and call them with structured JSON arguments.
+
+For this project, MCP is the adapter layer between a client and micrOS devices:
+
+```text
+MCP client -> stdio -> micrOSMCP -> TCP socket -> micrOS device
 ```
 
-Run `npm run build` after TypeScript changes so `npm run start` has current compiled files.
+The implementation mirrors the useful behavior of micrOS `socketClient.py` and `micrOSClient.py`, but it is standalone TypeScript and does not call Python.
+
+Project structure:
+
+- `src/index.ts`: minimal MCP stdio bootstrap.
+- `src/mcp-tools.ts`: MCP tool registration, names, descriptions, schemas, and response formatting.
+- `src/tools.ts`: collection barrel that re-exports the tool implementations.
+- `src/tools/`: individual tool implementations and reusable micrOS helpers.
+- `src/tools/common.ts`: shared device cache, socket client, discovery, parsing, and concurrency helpers.
+- `src/ui.ts`: local HTTP server for the browser tester UI.
+- `public/`: browser UI files for calling MCP tools without an AI client.
+- `scripts/start.mjs`: mode-aware starter for compiled MCP or UI entrypoints.
+- `scripts/docker-build.mjs`: Docker build and image export helper.
+- `scripts/check.mjs`: quick project sanity check.
+- `Dockerfile`: minimal runtime image for stdio MCP or the tester UI endpoint.
+- `data/device_conn_cache.json`: project-local micrOS device cache, created at runtime when needed.
+
+Runtime flow:
+
+1. MCP client calls a tool, for example `run_command`.
+2. `src/index.ts` starts the MCP server and registers tools through `src/mcp-tools.ts`.
+3. `src/mcp-tools.ts` validates input through the MCP SDK/Zod schema and calls the matching function from `src/tools.ts`.
+4. The matching file under `src/tools/` reads the cache, selects a device, opens a TCP socket if needed, and performs the micrOS operation.
+5. The result is serialized as formatted JSON text and returned to the MCP client.
+
+To add another tool, create a focused file under `src/tools/`, export it from `src/tools.ts`, then register its MCP schema in `src/mcp-tools.ts`. Shared micrOS behavior should stay in `src/tools/common.ts` only when it is useful to more than one tool.
+
+## Requirements
+
+- Node.js 20 or newer.
+- Network access from the host or container to micrOS devices on TCP port `9008`.
+- Docker, only if you want to build or run the container image.

@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const mode = process.argv[2] ?? "help";
+const args = process.argv.slice(2);
+const helpRequested = args.includes("--help") || args.includes("-h") || args.includes("help");
+const mode = helpRequested ? "help" : args[0] ?? "mcp";
 
 const modes = {
   mcp: {
@@ -24,19 +26,37 @@ const modes = {
 
 function printHelp() {
   console.error(`Usage:
+  npm run start
+  npm run start -- --help
+  npm run start -- ui
+  npm run start:mcp
+  npm run start:ui
+
+Direct:
+  node scripts/start.mjs
   node scripts/start.mjs mcp
   node scripts/start.mjs ui
 
 Modes:
   mcp      ${modes.mcp.description}
   ui       ${modes.ui.description}
+  test-ui  ${modes["test-ui"].description}
+
+Environment:
+  MICROS_DEVICE_CACHE_PATH  Override data/device_conn_cache.json.
+  HOST                      UI bind host. Default: 127.0.0.1 locally, 0.0.0.0 in Docker.
+  PORT                      UI port. Default: 3333.
+
+Examples:
+  MICROS_DEVICE_CACHE_PATH=/tmp/device_conn_cache.json npm run start
+  HOST=0.0.0.0 PORT=3333 npm run start -- ui
 
 Build first:
   npm run build
 `);
 }
 
-if (mode === "help" || mode === "--help" || mode === "-h") {
+if (mode === "help") {
   printHelp();
   process.exit(0);
 }

@@ -1,0 +1,10 @@
+.git
+.codex
+.agents
+dist
+node_modules
+npm-debug.log
+Dockerfile
+*.tar
+*.tgz
+.DS_Store
