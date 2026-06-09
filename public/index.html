@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>micrOSMCP Tool Tester</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar" aria-label="MCP tool tester">
+        <div>
+          <h1>micrOSMCP</h1>
+          <p>Local MCP tool tester</p>
+        </div>
+        <button id="refreshTools" type="button" title="Refresh tools" aria-label="Refresh tools">
+          <span aria-hidden="true">↻</span>
+        </button>
+      </section>
+
+      <section class="workspace">
+        <aside class="tools-panel">
+          <div class="panel-heading">
+            <h2>Tools</h2>
+            <span id="toolCount">0</span>
+          </div>
+          <nav id="toolList" class="tool-list" aria-label="Available MCP tools"></nav>
+        </aside>
+
+        <section class="runner">
+          <div class="runner-header">
+            <div>
+              <h2 id="selectedToolName">Select a tool</h2>
+              <p id="selectedToolDescription">Choose a tool to inspect its schema and call it.</p>
+            </div>
+            <button id="runTool" type="button" disabled>Run</button>
+          </div>
+
+          <div class="editor-grid">
+            <section class="field">
+              <span>Parameters</span>
+              <form id="parameterForm" class="parameter-form"></form>
+            </section>
+            <label class="field">
+              <span>Arguments JSON</span>
+              <textarea id="argumentsInput" spellcheck="false" disabled>{}</textarea>
+            </label>
+          </div>
+
+          <div class="editor-grid schema-grid">
+            <label class="field">
+              <span>Input schema</span>
+              <pre id="schemaOutput">{}</pre>
+            </label>
+          </div>
+
+          <label class="field result-field">
+            <span>Result</span>
+            <pre id="resultOutput">No calls yet.</pre>
+          </label>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

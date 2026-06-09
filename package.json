@@ -1,0 +1,29 @@
+{
+  "name": "microsmcp",
+  "version": "0.1.0",
+  "description": "A standalone MCP server for discovering micrOS devices and running micrOS commands.",
+  "type": "module",
+  "bin": {
+    "microsmcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node scripts/start.mjs mcp",
+    "start:mcp": "node scripts/start.mjs mcp",
+    "start:ui": "npm run build && node scripts/start.mjs ui",
+    "ui": "npm run build && node scripts/start.mjs ui"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.13.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
