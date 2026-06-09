@@ -105,16 +105,12 @@ export function registerMicrOSTools(server: McpServer) {
       description:
         "Discover available micrOS modules and module functions by running modules, then <module> help, on all cached devices or one selected device.",
       inputSchema: {
-        deviceName: z
+        deviceTag: z
           .string()
           .optional()
           .describe(
             "Optional device UID, FUID, IP address, or partial device name. Omit to discover commands on all cached devices."
           ),
-        deviceTag: z
-          .string()
-          .optional()
-          .describe("Alias for deviceName. The micrOS device UID, FUID, or IP address to target."),
         timeout: z.number().int().positive().optional().describe("Socket timeout in seconds. Defaults to 10."),
         password: z.string().optional().describe("Optional micrOS app password if auth is enabled."),
         verbose: z.boolean().optional().describe("Enable verbose micrOS client logging."),
@@ -124,11 +120,11 @@ export function registerMicrOSTools(server: McpServer) {
           .positive()
           .max(20)
           .optional()
-          .describe("Maximum devices to inspect in parallel when deviceName is omitted. Defaults to 3.")
+          .describe("Maximum devices to inspect in parallel when deviceTag is omitted. Defaults to 3.")
       }
     },
-    async ({ deviceName, deviceTag, timeout, password, verbose, concurrency }) => {
-      const result = await discoverCommands({ deviceName, deviceTag, timeout, password, verbose, concurrency });
+    async ({ deviceTag, timeout, password, verbose, concurrency }) => {
+      const result = await discoverCommands({ deviceTag, timeout, password, verbose, concurrency });
       return textResult(result, isToolError(result));
     }
   );

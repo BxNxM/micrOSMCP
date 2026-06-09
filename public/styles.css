@@ -201,10 +201,6 @@ button:disabled {
   margin-top: 16px;
 }
 
-.schema-grid {
-  grid-template-columns: 1fr;
-}
-
 .field {
   display: grid;
   gap: 8px;
@@ -295,6 +291,34 @@ pre {
   padding: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.schema-panel {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.schema-panel summary {
+  min-height: 42px;
+  padding: 11px 12px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  list-style-position: inside;
+}
+
+.schema-panel summary:hover {
+  color: var(--accent-dark);
+}
+
+.schema-panel pre {
+  min-height: 160px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
 }
 
 .result-field {

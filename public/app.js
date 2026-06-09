@@ -62,7 +62,7 @@ async function refreshDevices() {
 }
 
 function defaultValueFor(name, schema, toolName) {
-  if (name === "deviceTag" || name === "deviceName") {
+  if (name === "deviceTag") {
     const preferredDevice = devices.find((device) => !String(device.uid).startsWith("__")) ?? devices[0];
     return preferredDevice?.fuid || preferredDevice?.uid || "__localhost__";
   }
@@ -128,6 +128,11 @@ function setResult(value, isError = false) {
   resultOutput.classList.toggle("error", isError);
 }
 
+function setToolResult(payload) {
+  const parsed = parseToolText(payload);
+  setResult(parsed ?? payload, Boolean(payload?.isError));
+}
+
 function propertyType(schema) {
   if (schema?.enum) {
     return "enum";
@@ -162,7 +167,7 @@ function createDeviceSelect(name, required, value) {
 }
 
 function createParameterControl(name, schema, required, value) {
-  if (name === "deviceTag" || name === "deviceName") {
+  if (name === "deviceTag") {
     return createDeviceSelect(name, required, value);
   }
 
@@ -392,7 +397,7 @@ async function callSelectedTool() {
 
   try {
     const payload = await callTool(selectedTool.name, parsedArguments);
-    setResult(payload, Boolean(payload.isError));
+    setToolResult(payload);
 
     if (selectedTool.name === "discover_devices") {
       await refreshDevices();

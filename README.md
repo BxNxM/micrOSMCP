@@ -1,3 +1,6 @@
+![example1](./media/example1.png?raw=true)
+![test-webui](./media/mcp-test-webui.png?raw=true)
+
 # micrOSMCP
 
 Standalone TypeScript MCP server and browser tester UI for micrOS devices. Use it to discover devices, inspect the device cache, run micrOS commands, and discover each device's available module commands.
@@ -151,7 +154,7 @@ One device by UID, FUID, IP, or partial device name:
 
 ```json
 {
-  "deviceName": "TinyDevBoard"
+  "deviceTag": "TinyDevBoard"
 }
 ```
 
@@ -167,7 +170,7 @@ The response includes per-module raw help plus a flattened `commands` list:
 }
 ```
 
-`deviceTag` is accepted as an alias for `deviceName`. Use `password` if the device requires micrOS app authentication.
+Use `password` if the device requires micrOS app authentication.
 
 ## How Tools Are Defined
 

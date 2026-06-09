@@ -43,7 +43,6 @@ export type RunCommandInput = {
 };
 
 export type DiscoverCommandsInput = {
-  deviceName?: string;
   deviceTag?: string;
   timeout?: number;
   password?: string;

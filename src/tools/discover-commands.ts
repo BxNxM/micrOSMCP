@@ -68,14 +68,14 @@ async function discoverDeviceCommands(
 
 export async function discoverCommands(input: DiscoverCommandsInput = {}) {
   const cache = await readDeviceCache();
-  const deviceName = input.deviceTag ?? input.deviceName;
-  const devices = findDevices(cacheToDevices(cache), deviceName);
+  const deviceTag = input.deviceTag;
+  const devices = findDevices(cacheToDevices(cache), deviceTag);
 
-  if (deviceName && devices.length === 0) {
+  if (deviceTag && devices.length === 0) {
     return {
       ok: false,
-      deviceName,
-      error: `Unknown device: ${deviceName}`,
+      deviceTag,
+      error: `Unknown device: ${deviceTag}`,
       devices: []
     };
   }
@@ -86,7 +86,7 @@ export async function discoverCommands(input: DiscoverCommandsInput = {}) {
 
   return {
     ok: results.every((result) => result.ok),
-    deviceName: deviceName ?? null,
+    deviceTag: deviceTag ?? null,
     count: results.length,
     devices: results
   };
