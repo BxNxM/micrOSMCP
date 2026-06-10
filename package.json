@@ -8,12 +8,12 @@
   },
   "scripts": {
     "build": "tsc",
-    "check": "node scripts/check.mjs",
     "docker:build": "node scripts/docker-build.mjs",
     "dev": "tsx src/index.ts",
     "help": "node scripts/start.mjs --help",
     "start": "node scripts/start.mjs",
     "start:mcp": "node scripts/start.mjs mcp",
+    "start:test": "npm run build && node scripts/test.mjs",
     "start:ui": "npm run build && node scripts/start.mjs ui",
     "ui": "npm run build && node scripts/start.mjs ui"
   },

@@ -1,12 +1,22 @@
+import { z } from "zod";
 import {
   cacheToDevices,
   MicrOSSocketClient,
   normalizeCommandPipeline,
   readDeviceCache,
-  type RunCommandInput,
   selectDevice,
   socketErrorMessage
 } from "./common.js";
+import { defineTool } from "./definition.js";
+
+export type RunCommandInput = {
+  deviceTag: string;
+  command: string | string[];
+  separator?: string;
+  timeout?: number;
+  password?: string;
+  verbose?: boolean;
+};
 
 export async function runCommand(input: RunCommandInput) {
   const commands = normalizeCommandPipeline(input.command, input.separator);
@@ -58,3 +68,20 @@ export async function runCommand(input: RunCommandInput) {
     client.close();
   }
 }
+
+export const runCommandTool = defineTool<RunCommandInput>({
+  name: "run_command",
+  title: "Run Command",
+  description: "Run a real micrOS command pipeline on a selected device.",
+  inputSchema: {
+    deviceTag: z.string().describe("The micrOS device UID, FUID, or IP address to target."),
+    command: z
+      .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+      .describe("The command or command pipeline to run. String commands may use the <a> separator."),
+    separator: z.string().optional().describe("Optional string command separator. Defaults to <a>."),
+    timeout: z.number().int().positive().optional().describe("Socket timeout in seconds. Defaults to 10."),
+    password: z.string().optional().describe("Optional micrOS app password if auth is enabled."),
+    verbose: z.boolean().optional().describe("Enable verbose micrOS client logging.")
+  },
+  handler: runCommand
+});

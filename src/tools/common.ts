@@ -16,38 +16,13 @@ export type Device = {
 
 export type DeviceCache = Record<string, [string, number, string]>;
 
-export type ListDevicesInput = {};
-
-export type FilterDevicesInput = {
-  query: string;
-  status?: DeviceStatus;
-  includeStatus?: boolean;
-};
-
-export type DiscoverDevicesInput = {
+export type DiscoverDevicesOptions = {
   port?: number;
   networkPrefix?: string;
   startHost?: number;
   endHost?: number;
   concurrency?: number;
   timeoutMs?: number;
-};
-
-export type RunCommandInput = {
-  deviceTag: string;
-  command: string | string[];
-  separator?: string;
-  timeout?: number;
-  password?: string;
-  verbose?: boolean;
-};
-
-export type DiscoverCommandsInput = {
-  deviceTag?: string;
-  timeout?: number;
-  password?: string;
-  verbose?: boolean;
-  concurrency?: number;
 };
 
 export const deviceCachePath =
@@ -469,7 +444,7 @@ async function scanOpenPort({
   endHost = 254,
   concurrency = 50,
   timeoutMs = 1000
-}: Required<Pick<DiscoverDevicesInput, "port" | "startHost" | "endHost" | "concurrency" | "timeoutMs">> & {
+}: Required<Pick<DiscoverDevicesOptions, "port" | "startHost" | "endHost" | "concurrency" | "timeoutMs">> & {
   networkPrefix: string | null;
 }) {
   const prefix = networkPrefix;
@@ -529,7 +504,7 @@ async function handshakeDevice(ip: string, port = defaultPort, timeoutSeconds = 
   }
 }
 
-export async function discoverAndSaveDevices(input: DiscoverDevicesInput = {}) {
+export async function discoverAndSaveDevices(input: DiscoverDevicesOptions = {}) {
   const port = input.port ?? defaultPort;
   const timeoutMs = input.timeoutMs ?? 1000;
   const openHosts = await scanOpenPort({
