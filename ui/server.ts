@@ -2,13 +2,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { extname, isAbsolute, join, normalize, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createChatReply, listOpenAiModels, readChatConfig, saveChatConfig } from "./chat-bridge.js";
 
 const preferredPort = Number(process.env.PORT ?? 3333);
 const host = process.env.HOST ?? "127.0.0.1";
-const publicDir = fileURLToPath(new URL("../public", import.meta.url));
-const mcpServerPath = fileURLToPath(new URL("./index.js", import.meta.url));
+const uiAssetsDir = fileURLToPath(new URL("../../ui/assets", import.meta.url));
+const mcpServerPath = fileURLToPath(new URL("../mcp/index.js", import.meta.url));
 
 const client = new Client({
   name: "microsmcp-ui",
@@ -54,9 +55,10 @@ function sendError(response: ServerResponse, statusCode: number, message: string
 
 async function serveStatic(pathname: string, response: ServerResponse) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
-  const absolutePath = normalize(join(publicDir, requestedPath));
+  const absolutePath = normalize(join(uiAssetsDir, requestedPath));
+  const relativePath = relative(uiAssetsDir, absolutePath);
 
-  if (!absolutePath.startsWith(publicDir)) {
+  if (relativePath === ".." || relativePath.startsWith("..") || isAbsolute(relativePath)) {
     sendError(response, 403, "Forbidden");
     return;
   }
@@ -97,6 +99,31 @@ const server = createServer(async (request, response) => {
           arguments: typeof body.arguments === "object" && body.arguments !== null ? body.arguments : {}
         })
       );
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/chat") {
+      sendJson(response, 200, await createChatReply(client, await readJsonBody(request)));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/chat-config") {
+      sendJson(response, 200, await readChatConfig());
+      return;
+    }
+
+    if ((request.method === "POST" || request.method === "PUT") && url.pathname === "/api/chat-config") {
+      sendJson(response, 200, await saveChatConfig(await readJsonBody(request)));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/chat-models") {
+      sendJson(response, 200, await listOpenAiModels());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/chat-models") {
+      sendJson(response, 200, await listOpenAiModels(await readJsonBody(request)));
       return;
     }
 

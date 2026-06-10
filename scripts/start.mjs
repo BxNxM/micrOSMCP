@@ -11,15 +11,15 @@ const mode = helpRequested ? "help" : args[0] ?? "mcp";
 
 const modes = {
   mcp: {
-    file: "dist/index.js",
+    file: "dist/mcp/index.js",
     description: "Start the stdio MCP server. Use this mode from MCP client config."
   },
   ui: {
-    file: "dist/ui.js",
+    file: "dist/ui/server.js",
     description: "Start the local browser test UI. The UI starts an internal MCP bridge."
   },
   "test-ui": {
-    file: "dist/ui.js",
+    file: "dist/ui/server.js",
     description: "Alias for ui."
   }
 };
@@ -44,11 +44,13 @@ Modes:
 
 Environment:
   MICROS_DEVICE_CACHE_PATH  Override data/device_conn_cache.json.
+  MICROS_CHAT_CONFIG_PATH   Override data/ui_chat_config.json for the tester web app.
   HOST                      UI bind host. Default: 127.0.0.1 locally, 0.0.0.0 in Docker.
   PORT                      UI port. Default: 3333.
 
 Examples:
   MICROS_DEVICE_CACHE_PATH=/tmp/device_conn_cache.json npm run start
+  MICROS_CHAT_CONFIG_PATH=/tmp/ui_chat_config.json npm run start -- ui
   HOST=0.0.0.0 PORT=3333 npm run start -- ui
 
 Build first:

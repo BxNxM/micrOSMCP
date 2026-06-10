@@ -1,5 +1,5 @@
-![example1](./media/example1.png?raw=true)
 ![test-webui](./media/mcp-test-webui.png?raw=true)
+![example1](./media/example1.png?raw=true)
 
 # micrOSMCP
 
@@ -9,7 +9,6 @@ Standalone TypeScript MCP server and browser tester UI for micrOS devices. Use i
 
 ```sh
 npm install
-npm run build
 npm run start:ui
 ```
 
@@ -19,7 +18,9 @@ Open the printed URL, usually:
 http://127.0.0.1:3333
 ```
 
-The UI is the easiest way to verify everything locally. It lists the MCP tools, renders their schemas as forms, keeps JSON arguments editable, and gives device dropdowns for device-targeted tools.
+The UI is the easiest way to verify everything locally. It includes an optional AI chat panel for testing the MCP tools with an OpenAI API token, plus manual tool forms that render schemas, keep JSON arguments editable, and give device dropdowns for device-targeted tools.
+
+The AI chat token is saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse it. Override that path with `MICROS_CHAT_CONFIG_PATH` if you want to keep the token somewhere else. The model dropdown loads available LLM-style OpenAI models for the saved token. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
 
 ## Use With An MCP Client
 
@@ -90,6 +91,7 @@ Useful environment variables:
 
 ```sh
 MICROS_DEVICE_CACHE_PATH=/path/to/device_conn_cache.json npm run start
+MICROS_CHAT_CONFIG_PATH=/path/to/ui_chat_config.json npm run start -- ui
 HOST=0.0.0.0 PORT=3333 npm run start -- ui
 ```
 
@@ -174,38 +176,38 @@ Use `password` if the device requires micrOS app authentication.
 
 ## How Tools Are Defined
 
-Each MCP tool is defined in one file under `src/tools/`. That file owns both:
+Each MCP tool is defined in one file under `mcp/tools/`. That file owns both:
 
 - the business function, such as `runCommand(...)`
 - the MCP definition object, such as `runCommandTool`
 
-That keeps the tool name, title, description, Zod input schema, and behavior together. `src/mcp-tools.ts` only registers the collected definitions and formats MCP responses. `src/tools.ts` is the public barrel for tool functions, tool definitions, and shared types.
+That keeps the tool name, title, description, Zod input schema, and behavior together. `mcp/mcp-tools.ts` only registers the collected definitions and formats MCP responses. `mcp/tools.ts` is the public barrel for tool functions, tool definitions, and shared types.
 
 The rough call path is:
 
 ```text
 MCP client
-  -> src/index.ts
-  -> registerMicrOSTools() in src/mcp-tools.ts
-  -> toolDefinitions from src/tools/registry.ts
-  -> focused definition + implementation in src/tools/<tool-name>.ts
-  -> shared micrOS helpers in src/tools/common.ts when needed
+  -> mcp/index.ts
+  -> registerMicrOSTools() in mcp/mcp-tools.ts
+  -> toolDefinitions from mcp/tools/registry.ts
+  -> focused definition + implementation in mcp/tools/<tool-name>.ts
+  -> shared micrOS helpers in mcp/tools/common.ts when needed
 ```
 
 ### Add A New Tool
 
-1. Create a focused tool file under `src/tools/`, for example `src/tools/reboot-device.ts`.
-2. Define the tool input type in that same file. Put types in `src/tools/common.ts` only when they are genuinely shared helper types.
+1. Create a focused tool file under `mcp/tools/`, for example `mcp/tools/reboot-device.ts`.
+2. Define the tool input type in that same file. Put types in `mcp/tools/common.ts` only when they are genuinely shared helper types.
 3. In the same file, export the business function and a `MicrOSToolDefinition`.
-4. Add the `*Tool` definition to `src/tools/registry.ts`.
-5. Export the function and definition from `src/tools.ts`.
+4. Add the `*Tool` definition to `mcp/tools/registry.ts`.
+5. Export the function and definition from `mcp/tools.ts`.
 6. Add a short README entry in the tool table or tool examples.
 7. Run `npm run start:test` for focused contract tests and project entrypoint checks.
 
 Implementation example:
 
 ```ts
-// src/tools/example-tool.ts
+// mcp/tools/example-tool.ts
 import { z } from "zod";
 import { cacheToDevices, readDeviceCache } from "./common.js";
 import { defineTool } from "./definition.js";
@@ -239,7 +241,7 @@ export const exampleToolDefinition = defineTool<ExampleToolInput>({
 Registry export:
 
 ```ts
-// src/tools/registry.ts
+// mcp/tools/registry.ts
 import { exampleToolDefinition } from "./example-tool.js";
 
 export const toolDefinitions = [
@@ -251,12 +253,12 @@ export const toolDefinitions = [
 Barrel export:
 
 ```ts
-// src/tools.ts
+// mcp/tools.ts
 export type { ExampleToolInput } from "./tools/example-tool.js";
 export { exampleTool, exampleToolDefinition } from "./tools/example-tool.js";
 ```
 
-Tool responses should be JSON-serializable objects. If a tool can fail in a controlled way, prefer returning `{ ok: false, error: "..." }`; the generic registrar in `src/mcp-tools.ts` marks those responses as MCP errors when appropriate.
+Tool responses should be JSON-serializable objects. If a tool can fail in a controlled way, prefer returning `{ ok: false, error: "..." }`; the generic registrar in `mcp/mcp-tools.ts` marks those responses as MCP errors when appropriate.
 
 ## Device Cache
 
@@ -366,30 +368,19 @@ The implementation mirrors the useful behavior of micrOS `socketClient.py` and `
 
 Project structure:
 
-- `src/index.ts`: minimal MCP stdio bootstrap.
-- `src/mcp-tools.ts`: generic MCP registrar and response formatter.
-- `src/tools.ts`: collection barrel that re-exports tool implementations, definitions, and shared types.
-- `src/tools/`: individual tool files; each owns its schema, description, and business logic.
-- `src/tools/registry.ts`: ordered list of tool definitions to register.
-- `src/tools/definition.ts`: shared `MicrOSToolDefinition` type.
-- `src/tools/common.ts`: shared device cache, socket client, discovery, parsing, and concurrency helpers.
-- `src/ui.ts`: local HTTP server for the browser tester UI.
-- `public/`: browser UI files for calling MCP tools without an AI client.
-- `scripts/start.mjs`: mode-aware starter for compiled MCP or UI entrypoints.
-- `scripts/docker-build.mjs`: Docker build and image export helper.
-- `scripts/test.mjs`: minimal contract tests and project entrypoint checks.
+- `mcp/`: standalone MCP stdio server. This owns tool registration, tool definitions, micrOS socket/discovery helpers, and the public tool barrel.
+- `ui/`: tester mini app. This owns the local HTTP bridge, optional AI chat bridge, and static browser assets under `ui/assets/`.
+- `data/`: local runtime state. The device cache and optional UI chat config live here by default and are ignored by git.
+- `scripts/`: operational entrypoints for start modes, Docker image export, and minimal tests.
 - `Dockerfile`: minimal runtime image for stdio MCP or the tester UI endpoint.
-- `data/device_conn_cache.json`: project-local micrOS device cache, created at runtime when needed.
 
 Runtime flow:
 
 1. MCP client calls a tool, for example `run_command`.
-2. `src/index.ts` starts the MCP server and registers tools through `src/mcp-tools.ts`.
-3. `src/mcp-tools.ts` registers the collected definitions from `src/tools/registry.ts`.
-4. The matching file under `src/tools/` owns the Zod schema, reads the cache, selects a device, opens a TCP socket if needed, and performs the micrOS operation.
+2. `mcp/index.ts` starts the MCP server and registers tools through `mcp/mcp-tools.ts`.
+3. `mcp/mcp-tools.ts` registers the collected definitions from `mcp/tools/registry.ts`.
+4. The matching file under `mcp/tools/` owns the Zod schema, reads the cache, selects a device, opens a TCP socket if needed, and performs the micrOS operation.
 5. The result is serialized as formatted JSON text and returned to the MCP client.
-
-To add another tool, create a focused file under `src/tools/`, export its function and definition from `src/tools.ts`, then add its definition to `src/tools/registry.ts`. Shared micrOS behavior should stay in `src/tools/common.ts` only when it is useful to more than one tool.
 
 ## Requirements
 

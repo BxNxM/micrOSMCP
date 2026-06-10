@@ -4,12 +4,12 @@
   "description": "Standalone MCP server and tester UI for discovering micrOS devices and running micrOS commands.",
   "type": "module",
   "bin": {
-    "microsmcp": "dist/index.js"
+    "microsmcp": "dist/mcp/index.js"
   },
   "scripts": {
     "build": "tsc",
     "docker:build": "node scripts/docker-build.mjs",
-    "dev": "tsx src/index.ts",
+    "dev": "tsx mcp/index.ts",
     "help": "node scripts/start.mjs --help",
     "start": "node scripts/start.mjs",
     "start:mcp": "node scripts/start.mjs mcp",

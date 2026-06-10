@@ -1,3 +1,5 @@
+import { initChat } from "./chat.js";
+
 const toolList = document.querySelector("#toolList");
 const toolCount = document.querySelector("#toolCount");
 const refreshTools = document.querySelector("#refreshTools");
@@ -8,6 +10,7 @@ const parameterForm = document.querySelector("#parameterForm");
 const argumentsInput = document.querySelector("#argumentsInput");
 const schemaOutput = document.querySelector("#schemaOutput");
 const resultOutput = document.querySelector("#resultOutput");
+const chatMount = document.querySelector("#chatMount");
 
 let tools = [];
 let devices = [];
@@ -414,5 +417,15 @@ parameterForm.addEventListener("input", syncJsonFromForm);
 parameterForm.addEventListener("change", syncJsonFromForm);
 refreshTools.addEventListener("click", loadTools);
 runTool.addEventListener("click", callSelectedTool);
+initChat({
+  mount: chatMount,
+  onToolEvent(event) {
+    setResult(event.result);
+
+    if (event.name === "discover_devices") {
+      void refreshDevices();
+    }
+  }
+});
 
 await loadTools();

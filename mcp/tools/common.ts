@@ -1,8 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { Socket } from "node:net";
 import { networkInterfaces } from "node:os";
-import { fileURLToPath } from "node:url";
 
 export type DeviceStatus = "online" | "offline";
 
@@ -27,7 +26,7 @@ export type DiscoverDevicesOptions = {
 
 export const deviceCachePath =
   process.env.MICROS_DEVICE_CACHE_PATH ??
-  fileURLToPath(new URL("../../data/device_conn_cache.json", import.meta.url));
+  resolve(process.cwd(), "data/device_conn_cache.json");
 export const defaultPort = 9008;
 
 const defaultCache: DeviceCache = {

@@ -3,4 +3,5 @@ dist/
 .DS_Store
 *.log
 data/device_conn_cache.json
+data/ui_chat_config.json
 package-lock.json

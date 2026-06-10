@@ -2,24 +2,30 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { normalizeCommandPipeline, parseModuleHelp, parseModules } from "../dist/tools/common.js";
-import { toolDefinitions } from "../dist/tools/registry.js";
+import { normalizeCommandPipeline, parseModuleHelp, parseModules } from "../dist/mcp/tools/common.js";
+import { toolDefinitions } from "../dist/mcp/tools/registry.js";
 
 const requiredPaths = [
   "AGENTS.md",
   "Dockerfile",
   "README.md",
   "package.json",
-  "public/index.html",
   "scripts/docker-build.mjs",
   "scripts/start.mjs",
   "scripts/test.mjs",
-  "src/index.ts",
-  "src/mcp-tools.ts",
-  "src/tools.ts",
-  "src/tools/common.ts",
-  "src/tools/definition.ts",
-  "src/tools/registry.ts"
+  "mcp/index.ts",
+  "mcp/mcp-tools.ts",
+  "mcp/tools.ts",
+  "mcp/tools/common.ts",
+  "mcp/tools/definition.ts",
+  "mcp/tools/registry.ts",
+  "ui/assets/app.js",
+  "ui/assets/chat.css",
+  "ui/assets/chat.js",
+  "ui/assets/index.html",
+  "ui/assets/styles.css",
+  "ui/chat-bridge.ts",
+  "ui/server.ts"
 ];
 
 function assertCommand(command, args, expectedText) {
