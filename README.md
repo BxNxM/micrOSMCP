@@ -1,5 +1,5 @@
 ![test-webui](./media/mcp-test-webui.png?raw=true)
-![example1](./media/example1.png?raw=true)
+![example1](./media/mcp-tools.png?raw=true)
 
 # micrOSMCP
 
@@ -97,15 +97,16 @@ HOST=0.0.0.0 PORT=3333 npm run start -- ui
 
 ## Tools
 
-The MCP server exposes five tools.
+The MCP server exposes six tools.
 
 | Tool | Purpose |
 | --- | --- |
-| `list_devices` | Return cached micrOS devices. |
-| `filter_devices` | Filter cached devices by UID, FUID, IP, port, and optional live status. |
-| `discover_devices` | Scan a `/24` network, handshake with micrOS devices, and update the cache. |
+| `filter_devices` | Main device selection tool: filter cached devices by name, UID, IP, module, function, command, feature text, and optional live status. Feature-query results are pruned to relevant modules. |
+| `list_devices` | Return a compact cached device inventory with device identity and known module names only. |
+| `discover_devices` | Run a fresh `/24` network discovery, update the device cache, and refresh cached features for discovered devices. |
 | `run_command` | Run a command or command pipeline on one selected device. |
-| `discover_commands` | Run `modules`, then `<module> help`, to map a device's command surface. |
+| `ask_user` | Ask the human user for required missing details when tools and safe defaults are not enough. |
+| `discover_commands` | Run `modules`, then `<module> help`, to map and cache a device's command surface. |
 
 ### `run_command`
 
@@ -129,6 +130,41 @@ Array pipeline:
 
 Use read-only commands such as `version` for smoke tests. Other micrOS commands may change device state.
 
+### `ask_user`
+
+Use this only when the AI cannot safely proceed from cached device data, tool results, or a conservative default:
+
+```json
+{
+  "question": "Which device should I target?",
+  "reason": "Two devices match the requested sensor module.",
+  "choices": ["TerraceSensor", "Cabinet"]
+}
+```
+
+The tool returns a compact structured marker with `needsUserInput: true`. Clients should show the question to the user and wait for their answer before continuing.
+
+### `filter_devices`
+
+Use this as the primary device selection tool when you know part of a device name or part of a capability:
+
+```json
+{
+  "query": "dht22"
+}
+```
+
+The query matches cached device identity fields and cached feature metadata, including module names, function names, command signatures, parameters, and raw help text. Matching devices include cached `features` when available. If the query matches the device identity, full features are returned; if it matches a feature/module/command, irrelevant modules and commands are removed to keep context compact.
+
+Check live status while filtering:
+
+```json
+{
+  "query": "Terrace",
+  "includeStatus": true
+}
+```
+
 ### `discover_devices`
 
 ```json
@@ -138,11 +174,16 @@ Use read-only commands such as `version` for smoke tests. Other micrOS commands 
   "endHost": 254,
   "port": 9008,
   "timeoutMs": 1000,
-  "concurrency": 50
+  "concurrency": 50,
+  "refreshFeatures": true,
+  "featureTimeout": 3,
+  "featureConcurrency": 3
 }
 ```
 
 If `networkPrefix` is omitted, the server uses the active local IPv4 interface. In Docker Desktop, pass `networkPrefix` explicitly when automatic discovery sees the container network instead of your LAN.
+
+Discovery is a fresh network scan every time this tool runs. By default, it also refreshes the feature cache for newly discovered devices, but the tool response stays compact with module and command counts rather than full function details. Set `refreshFeatures` to `false` when you only want to update device addresses. Use `featureConcurrency` to control how many discovered devices are inspected in parallel during feature refresh.
 
 ### `discover_commands`
 
@@ -282,6 +323,14 @@ If the cache is missing or invalid, the server creates it with these defaults:
 - `__localhost__`: `127.0.0.1`, port `9008`, FUID `__simulator__`
 
 The first cache read also attempts one automatic discovery and continues with whatever cache is available. Discovery is additive: it updates discovered devices but does not delete stale cached entries.
+
+At MCP startup, the server runs an initialization pass that scans for devices, then discovers each cached device's modules and functions. Successful feature discoveries are persisted in:
+
+```text
+data/device_feature_cache.json
+```
+
+`list_devices` stays compact: it includes device identity plus known module names, but not function-level feature details. Use `filter_devices` for targeted feature lookup and `discover_commands` for full module/function details. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
 
 ## Docker
 

@@ -72,9 +72,10 @@ export async function runCommand(input: RunCommandInput) {
 export const runCommandTool = defineTool<RunCommandInput>({
   name: "run_command",
   title: "Run Command",
-  description: "Run a real micrOS command pipeline on a selected device.",
+  description:
+    "Run a real micrOS command pipeline on one selected embedded device. Use filter_devices first when choosing a target; commands may change device state.",
   inputSchema: {
-    deviceTag: z.string().describe("The micrOS device UID, FUID, or IP address to target."),
+    deviceTag: z.string().describe("The exact micrOS device UID, FUID, or IP address to target."),
     command: z
       .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
       .describe("The command or command pipeline to run. String commands may use the <a> separator."),

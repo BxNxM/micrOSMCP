@@ -1,6 +1,9 @@
 import { z } from "zod";
 import {
   cacheToDevices,
+  type CachedDeviceFeatures,
+  type DiscoveredCommand,
+  type DiscoveredModule,
   type Device,
   findDevices,
   mapWithConcurrency,
@@ -8,6 +11,8 @@ import {
   parseModuleHelp,
   parseModules,
   readDeviceCache,
+  readDeviceFeatureCache,
+  saveDeviceFeatureCache,
   socketErrorMessage
 } from "./common.js";
 import { defineTool } from "./definition.js";
@@ -20,18 +25,32 @@ export type DiscoverCommandsInput = {
   concurrency?: number;
 };
 
+export type DeviceCommandDiscoverySuccess = CachedDeviceFeatures & {
+  ok: true;
+  device: Device;
+};
+
+export type DeviceCommandDiscoveryFailure = {
+  ok: false;
+  device: Device;
+  modulesCommand: string;
+  error: string;
+};
+
+export type DeviceCommandDiscoveryResult = DeviceCommandDiscoverySuccess | DeviceCommandDiscoveryFailure;
+
 async function discoverDeviceCommands(
   device: Device,
   input: Pick<DiscoverCommandsInput, "timeout" | "password" | "verbose">
-) {
+): Promise<DeviceCommandDiscoveryResult> {
   const client = new MicrOSSocketClient(device, input.timeout ?? 10, input.password, Boolean(input.verbose));
 
   try {
     await client.connect();
     const moduleLines = await client.sendCommand("modules");
     const modules = parseModules(moduleLines);
-    const moduleDetails = [];
-    const commands = [];
+    const moduleDetails: DiscoveredModule[] = [];
+    const commands: DiscoveredCommand[] = [];
 
     for (const moduleName of modules) {
       const helpLines = await client.sendCommand(`${moduleName} help`);
@@ -58,6 +77,7 @@ async function discoverDeviceCommands(
     return {
       ok: true,
       device,
+      discoveredAt: new Date().toISOString(),
       modulesCommand: "modules",
       rawModules: moduleLines,
       modules: moduleDetails,
@@ -75,6 +95,38 @@ async function discoverDeviceCommands(
   }
 }
 
+export async function saveSuccessfulFeatureDiscoveries(results: DeviceCommandDiscoveryResult[]) {
+  const cache = await readDeviceFeatureCache();
+  let changed = false;
+
+  for (const result of results) {
+    if (!result.ok) {
+      continue;
+    }
+
+    cache[result.device.uid] = {
+      discoveredAt: result.discoveredAt,
+      modulesCommand: result.modulesCommand,
+      rawModules: result.rawModules,
+      modules: result.modules,
+      commands: result.commands
+    };
+    changed = true;
+  }
+
+  if (changed) {
+    await saveDeviceFeatureCache(cache);
+  }
+}
+
+export async function discoverCommandsForDevices(devices: Device[], input: DiscoverCommandsInput = {}) {
+  const results = await mapWithConcurrency(devices, input.concurrency ?? 3, (device) =>
+    discoverDeviceCommands(device, input)
+  );
+  await saveSuccessfulFeatureDiscoveries(results);
+  return results;
+}
+
 export async function discoverCommands(input: DiscoverCommandsInput = {}) {
   const cache = await readDeviceCache();
   const deviceTag = input.deviceTag;
@@ -89,9 +141,7 @@ export async function discoverCommands(input: DiscoverCommandsInput = {}) {
     };
   }
 
-  const results = await mapWithConcurrency(devices, input.concurrency ?? 3, (device) =>
-    discoverDeviceCommands(device, input)
-  );
+  const results = await discoverCommandsForDevices(devices, input);
 
   return {
     ok: results.every((result) => result.ok),
@@ -105,7 +155,7 @@ export const discoverCommandsTool = defineTool<DiscoverCommandsInput>({
   name: "discover_commands",
   title: "Discover Commands",
   description:
-    "Discover available micrOS modules and module functions by running modules, then <module> help, on all cached devices or one selected device.",
+    "Discover and cache available micrOS modules/functions by running modules, then <module> help, on all cached devices or one selected device.",
   inputSchema: {
     deviceTag: z
       .string()

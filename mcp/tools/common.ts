@@ -11,9 +11,41 @@ export type Device = {
   port: number;
   fuid: string;
   status?: DeviceStatus | "unknown";
+  features?: CachedDeviceFeatures;
 };
 
 export type DeviceCache = Record<string, [string, number, string]>;
+
+export type DiscoveredModuleFunction = {
+  name: string;
+  parameters: string[];
+  signature: string;
+};
+
+export type DiscoveredModule = {
+  name: string;
+  helpCommand: string;
+  rawHelp: string[];
+  functions: DiscoveredModuleFunction[];
+};
+
+export type DiscoveredCommand = {
+  module: string;
+  function: string;
+  parameters: string[];
+  command: string;
+  signature: string;
+};
+
+export type CachedDeviceFeatures = {
+  discoveredAt: string;
+  modulesCommand: string;
+  rawModules: string[];
+  modules: DiscoveredModule[];
+  commands: DiscoveredCommand[];
+};
+
+export type DeviceFeatureCache = Record<string, CachedDeviceFeatures>;
 
 export type DiscoverDevicesOptions = {
   port?: number;
@@ -27,6 +59,9 @@ export type DiscoverDevicesOptions = {
 export const deviceCachePath =
   process.env.MICROS_DEVICE_CACHE_PATH ??
   resolve(process.cwd(), "data/device_conn_cache.json");
+export const deviceFeatureCachePath =
+  process.env.MICROS_DEVICE_FEATURE_CACHE_PATH ??
+  resolve(process.cwd(), "data/device_feature_cache.json");
 export const defaultPort = 9008;
 
 const defaultCache: DeviceCache = {
@@ -65,6 +100,119 @@ function normalizeDeviceCache(input: unknown): DeviceCache {
   return normalized;
 }
 
+function stringArray(input: unknown) {
+  return Array.isArray(input) ? input.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const normalized: DeviceFeatureCache = {};
+
+  for (const [uid, value] of Object.entries(input)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+
+    const entry = value as Record<string, unknown>;
+    const discoveredAt = typeof entry.discoveredAt === "string" ? entry.discoveredAt : null;
+    const modulesCommand = typeof entry.modulesCommand === "string" ? entry.modulesCommand : null;
+
+    if (!discoveredAt || !modulesCommand) {
+      continue;
+    }
+
+    const modules = Array.isArray(entry.modules)
+      ? entry.modules.flatMap((moduleEntry): DiscoveredModule[] => {
+          if (!moduleEntry || typeof moduleEntry !== "object" || Array.isArray(moduleEntry)) {
+            return [];
+          }
+
+          const module = moduleEntry as Record<string, unknown>;
+          const name = typeof module.name === "string" ? module.name : null;
+          const helpCommand = typeof module.helpCommand === "string" ? module.helpCommand : null;
+
+          if (!name || !helpCommand) {
+            return [];
+          }
+
+          const functions = Array.isArray(module.functions)
+            ? module.functions.flatMap((fnEntry): DiscoveredModuleFunction[] => {
+                if (!fnEntry || typeof fnEntry !== "object" || Array.isArray(fnEntry)) {
+                  return [];
+                }
+
+                const fn = fnEntry as Record<string, unknown>;
+                const fnName = typeof fn.name === "string" ? fn.name : null;
+                const signature = typeof fn.signature === "string" ? fn.signature : null;
+
+                if (!fnName || !signature) {
+                  return [];
+                }
+
+                return [
+                  {
+                    name: fnName,
+                    parameters: stringArray(fn.parameters),
+                    signature
+                  }
+                ];
+              })
+            : [];
+
+          return [
+            {
+              name,
+              helpCommand,
+              rawHelp: stringArray(module.rawHelp),
+              functions
+            }
+          ];
+        })
+      : [];
+
+    const commands = Array.isArray(entry.commands)
+      ? entry.commands.flatMap((commandEntry): DiscoveredCommand[] => {
+          if (!commandEntry || typeof commandEntry !== "object" || Array.isArray(commandEntry)) {
+            return [];
+          }
+
+          const command = commandEntry as Record<string, unknown>;
+          const moduleName = typeof command.module === "string" ? command.module : null;
+          const functionName = typeof command.function === "string" ? command.function : null;
+          const commandText = typeof command.command === "string" ? command.command : null;
+          const signature = typeof command.signature === "string" ? command.signature : null;
+
+          if (!moduleName || !functionName || !commandText || !signature) {
+            return [];
+          }
+
+          return [
+            {
+              module: moduleName,
+              function: functionName,
+              parameters: stringArray(command.parameters),
+              command: commandText,
+              signature
+            }
+          ];
+        })
+      : [];
+
+    normalized[uid] = {
+      discoveredAt,
+      modulesCommand,
+      rawModules: stringArray(entry.rawModules),
+      modules,
+      commands
+    };
+  }
+
+  return normalized;
+}
+
 export function cacheToDevices(cache: DeviceCache): Device[] {
   return Object.entries(cache).map(([uid, [ip, port, fuid]]) => ({
     uid,
@@ -72,6 +220,120 @@ export function cacheToDevices(cache: DeviceCache): Device[] {
     port,
     fuid
   }));
+}
+
+export function attachDeviceFeatures(devices: Device[], featureCache: DeviceFeatureCache) {
+  return devices.map((device) => ({
+    ...device,
+    ...(featureCache[device.uid] ? { features: featureCache[device.uid] } : {})
+  }));
+}
+
+export async function readCachedDevicesWithFeatures() {
+  const cache = await readDeviceCache();
+  const featureCache = await readDeviceFeatureCache();
+
+  return {
+    cache,
+    featureCache,
+    devices: attachDeviceFeatures(cacheToDevices(cache), featureCache)
+  };
+}
+
+export function deviceSearchFields(device: Device) {
+  return [
+    ...deviceIdentityFields(device),
+    ...deviceFeatureSearchFields(device.features)
+  ];
+}
+
+export function deviceIdentityFields(device: Device) {
+  return [device.uid, device.ip, String(device.port), device.fuid];
+}
+
+export function fieldsMatchQuery(fields: string[], query: string) {
+  const normalized = query.trim().toLowerCase();
+  return normalized.length > 0 && fields.some((field) => field.toLowerCase().includes(normalized));
+}
+
+export function deviceFeatureSearchFields(features?: CachedDeviceFeatures) {
+  if (!features) {
+    return [];
+  }
+
+  return [
+    features.discoveredAt,
+    features.modulesCommand,
+    ...features.rawModules,
+    ...features.modules.flatMap((module) => [
+      module.name,
+      module.helpCommand,
+      ...module.rawHelp,
+      ...module.functions.flatMap((fn) => [fn.name, fn.signature, ...fn.parameters])
+    ]),
+    ...features.commands.flatMap((command) => [
+      command.module,
+      command.function,
+      command.command,
+      command.signature,
+      ...command.parameters
+    ])
+  ];
+}
+
+function moduleSearchFields(module: DiscoveredModule) {
+  return [
+    module.name,
+    module.helpCommand,
+    ...module.rawHelp,
+    ...module.functions.flatMap((fn) => [fn.name, fn.signature, ...fn.parameters])
+  ];
+}
+
+function functionSearchFields(fn: DiscoveredModuleFunction) {
+  return [fn.name, fn.signature, ...fn.parameters];
+}
+
+function commandSearchFields(command: DiscoveredCommand) {
+  return [command.module, command.function, command.command, command.signature, ...command.parameters];
+}
+
+export function pruneDeviceFeaturesForQuery(features: CachedDeviceFeatures | undefined, query: string) {
+  if (!features || query.trim().length === 0) {
+    return features;
+  }
+
+  const modules = features.modules.flatMap((module): DiscoveredModule[] => {
+    if (!fieldsMatchQuery(moduleSearchFields(module), query)) {
+      return [];
+    }
+
+    const moduleNameMatches = fieldsMatchQuery([module.name, module.helpCommand, ...module.rawHelp], query);
+    const functions = moduleNameMatches
+      ? module.functions
+      : module.functions.filter((fn) => fieldsMatchQuery(functionSearchFields(fn), query));
+
+    return [
+      {
+        ...module,
+        rawHelp: moduleNameMatches
+          ? module.rawHelp
+          : module.rawHelp.filter((line) => fieldsMatchQuery([line], query)),
+        functions
+      }
+    ];
+  });
+  const moduleNames = new Set(modules.map((module) => module.name));
+  const commands = features.commands.filter(
+    (command) => moduleNames.has(command.module) || fieldsMatchQuery(commandSearchFields(command), query)
+  );
+
+  return {
+    ...features,
+    rawModules: modules.map((module) => module.name),
+    modules,
+    commands
+  };
 }
 
 async function readRawDeviceCache(): Promise<DeviceCache | null> {
@@ -86,6 +348,20 @@ async function readRawDeviceCache(): Promise<DeviceCache | null> {
 export async function saveDeviceCache(cache: DeviceCache) {
   await mkdir(dirname(deviceCachePath), { recursive: true });
   await writeFile(deviceCachePath, `${JSON.stringify({ ...defaultCache, ...cache }, null, 4)}\n`);
+}
+
+export async function readDeviceFeatureCache(): Promise<DeviceFeatureCache> {
+  try {
+    const raw = await readFile(deviceFeatureCachePath, "utf8");
+    return normalizeDeviceFeatureCache(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+export async function saveDeviceFeatureCache(cache: DeviceFeatureCache) {
+  await mkdir(dirname(deviceFeatureCachePath), { recursive: true });
+  await writeFile(deviceFeatureCachePath, `${JSON.stringify(cache, null, 4)}\n`);
 }
 
 export async function readDeviceCache(): Promise<DeviceCache> {

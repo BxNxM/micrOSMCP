@@ -2,6 +2,257 @@ function formatJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
+function appendInlineMarkdown(parent, text) {
+  const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
+  let cursor = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) {
+      parent.append(document.createTextNode(text.slice(cursor, match.index)));
+    }
+
+    const token = match[0];
+
+    if (token.startsWith("**") || token.startsWith("__")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.append(strong);
+    } else if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.append(code);
+    } else if (token.startsWith("[")) {
+      const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+      const link = document.createElement("a");
+      link.href = linkMatch?.[2] ?? "#";
+      link.textContent = linkMatch?.[1] ?? token;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      parent.append(link);
+    } else {
+      const emphasis = document.createElement("em");
+      emphasis.textContent = token.slice(1, -1);
+      parent.append(emphasis);
+    }
+
+    cursor = match.index + token.length;
+  }
+
+  if (cursor < text.length) {
+    parent.append(document.createTextNode(text.slice(cursor)));
+  }
+}
+
+function splitCollapsedTableRows(text) {
+  return String(text || "No text response.")
+    .split("\n")
+    .flatMap((line) => {
+      const tableStart = line.search(/\|[^|]+\|/);
+
+      if (tableStart > 0 && line.slice(tableStart).split("|").length > 4) {
+        return [line.slice(0, tableStart).trimEnd(), line.slice(tableStart).replace(/\|\s+\|/g, "|\n|")];
+      }
+
+      return line.replace(/\|\s+\|/g, "|\n|");
+    })
+    .join("\n")
+    .split("\n");
+}
+
+function isTableLine(line) {
+  return /^\s*\|.*\|\s*$/.test(line);
+}
+
+function parseTableCells(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function parseAlignment(cells) {
+  if (!cells.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+    return null;
+  }
+
+  return cells.map((cell) => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+
+    if (left && right) {
+      return "center";
+    }
+
+    return right ? "right" : "left";
+  });
+}
+
+function appendTableCell(row, tagName, text, align) {
+  const cell = document.createElement(tagName);
+  cell.style.textAlign = align;
+  appendInlineMarkdown(cell, text);
+  row.append(cell);
+}
+
+function renderTable(lines, startIndex) {
+  const header = parseTableCells(lines[startIndex]);
+  const alignment = parseAlignment(parseTableCells(lines[startIndex + 1] ?? ""));
+
+  if (!alignment || alignment.length !== header.length) {
+    return null;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "chat-table-wrap";
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+
+  header.forEach((cell, cellIndex) => {
+    appendTableCell(headerRow, "th", cell, alignment[cellIndex] ?? "left");
+  });
+  thead.append(headerRow);
+  table.append(thead);
+
+  const tbody = document.createElement("tbody");
+  let index = startIndex + 2;
+
+  while (index < lines.length && isTableLine(lines[index])) {
+    const cells = parseTableCells(lines[index]);
+
+    if (cells.length !== header.length) {
+      break;
+    }
+
+    const row = document.createElement("tr");
+    cells.forEach((cell, cellIndex) => {
+      appendTableCell(row, "td", cell, alignment[cellIndex] ?? "left");
+    });
+    tbody.append(row);
+    index += 1;
+  }
+
+  table.append(tbody);
+  wrapper.append(table);
+
+  return {
+    element: wrapper,
+    nextIndex: index
+  };
+}
+
+function renderMarkdown(text) {
+  const fragment = document.createDocumentFragment();
+  const lines = splitCollapsedTableRows(text);
+  let index = 0;
+
+  function appendParagraph(paragraphLines) {
+    const paragraph = document.createElement("p");
+    appendInlineMarkdown(paragraph, paragraphLines.join(" "));
+    fragment.append(paragraph);
+  }
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fenceMatch = line.match(/^```(\w+)?\s*$/);
+    if (fenceMatch) {
+      index += 1;
+      const codeLines = [];
+
+      while (index < lines.length && !lines[index].startsWith("```")) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+
+      if (index < lines.length) {
+        index += 1;
+      }
+
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = codeLines.join("\n");
+      pre.append(code);
+      fragment.append(pre);
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      const heading = document.createElement(`h${headingMatch[1].length + 2}`);
+      appendInlineMarkdown(heading, headingMatch[2]);
+      fragment.append(heading);
+      index += 1;
+      continue;
+    }
+
+    if (isTableLine(line) && isTableLine(lines[index + 1] ?? "")) {
+      const table = renderTable(lines, index);
+
+      if (table) {
+        fragment.append(table.element);
+        index = table.nextIndex;
+        continue;
+      }
+    }
+
+    if (/^\s*[-*]\s+/.test(line)) {
+      const list = document.createElement("ul");
+
+      while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
+        const item = document.createElement("li");
+        appendInlineMarkdown(item, lines[index].replace(/^\s*[-*]\s+/, ""));
+        list.append(item);
+        index += 1;
+      }
+
+      fragment.append(list);
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const list = document.createElement("ol");
+
+      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
+        const item = document.createElement("li");
+        appendInlineMarkdown(item, lines[index].replace(/^\s*\d+\.\s+/, ""));
+        list.append(item);
+        index += 1;
+      }
+
+      fragment.append(list);
+      continue;
+    }
+
+    const paragraphLines = [];
+
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^```/.test(lines[index]) &&
+      !/^(#{1,3})\s+/.test(lines[index]) &&
+      !isTableLine(lines[index]) &&
+      !/^\s*[-*]\s+/.test(lines[index]) &&
+      !/^\s*\d+\.\s+/.test(lines[index])
+    ) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+
+    appendParagraph(paragraphLines);
+  }
+
+  return fragment;
+}
+
 function createChatElement() {
   const section = document.createElement("section");
   section.className = "chat-panel";
@@ -63,13 +314,57 @@ export function initChat({ mount, onToolEvent } = {}) {
   let recognition = null;
   let saveTimer = null;
 
+  function renderChatMessageBody(body, role, text) {
+    body.textContent = "";
+
+    if (role === "assistant") {
+      body.append(renderMarkdown(text || "No text response."));
+      return;
+    }
+
+    body.textContent = text || "";
+  }
+
   function appendChatMessage(role, text) {
     const message = document.createElement("div");
     message.className = `chat-message ${role}`;
-    message.textContent = text || (role === "assistant" ? "No text response." : "");
+    const body = document.createElement("div");
+    body.className = "chat-message-body";
+    renderChatMessageBody(body, role, text || (role === "assistant" ? "No text response." : ""));
+    message.append(body);
     chatLog.append(message);
     chatLog.scrollTop = chatLog.scrollHeight;
     return message;
+  }
+
+  function setChatMessageText(message, text) {
+    const body = message.querySelector(".chat-message-body");
+    const role = message.classList.contains("assistant") ? "assistant" : "plain";
+
+    if (body) {
+      renderChatMessageBody(body, role, text || "No text response.");
+      return;
+    }
+
+    message.textContent = text || "No text response.";
+  }
+
+  function appendToolDetails(message, event) {
+    const details = document.createElement("details");
+    details.className = "chat-tool-details";
+
+    const summary = document.createElement("summary");
+    summary.textContent = `${event.name} raw tool response`;
+
+    const output = document.createElement("pre");
+    output.textContent = formatJson({
+      name: event.name,
+      arguments: event.arguments,
+      result: event.result
+    });
+
+    details.append(summary, output);
+    message.append(details);
   }
 
   function speak(text) {
@@ -207,11 +502,19 @@ export function initChat({ mount, onToolEvent } = {}) {
     }, 500);
   }
 
-  function appendToolEvents(toolEvents) {
+  function appendToolEvents(toolEvents, message) {
     for (const event of toolEvents ?? []) {
-      appendChatMessage("tool", `${event.name}\n${formatJson(event.result)}`);
+      if (message) {
+        appendToolDetails(message, event);
+      } else {
+        const toolMessage = appendChatMessage("tool", event.name);
+        appendToolDetails(toolMessage, event);
+      }
+
       onToolEvent?.(event);
     }
+
+    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
   async function sendChatMessage(event) {
@@ -239,13 +542,13 @@ export function initChat({ mount, onToolEvent } = {}) {
     try {
       const payload = await callChat();
       const reply = payload.message || "Done.";
-      pending.textContent = reply;
+      setChatMessageText(pending, reply);
       chatMessages.push({ role: "assistant", content: reply });
-      appendToolEvents(payload.toolEvents);
+      appendToolEvents(payload.toolEvents, pending);
       speak(reply);
     } catch (error) {
       pending.className = "chat-message error";
-      pending.textContent = error instanceof Error ? error.message : "Chat request failed.";
+      setChatMessageText(pending, error instanceof Error ? error.message : "Chat request failed.");
     } finally {
       sendChat.disabled = false;
       listenButton.disabled = !recognition;

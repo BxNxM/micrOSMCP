@@ -197,7 +197,7 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
     {
       role: "system",
       content:
-        "You are testing a local micrOS MCP server. Use the available tools when a tool call is useful. Prefer read-only commands unless the user explicitly asks for a state change."
+        "You operate local micrOS embedded devices for the user through the available MCP tools. Follow the user's intent, use filter_devices to select targets by name or capability, and use list_devices for compact inventory. Running commands can change real device state, so choose targets carefully and use ask_user only when required information is missing and no safe default can be inferred; after ask_user, ask the user the question clearly and wait."
     },
     ...incomingMessages
   ];

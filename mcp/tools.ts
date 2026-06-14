@@ -1,14 +1,21 @@
 export type {
+  CachedDeviceFeatures,
   Device,
+  DeviceFeatureCache,
   DeviceStatus,
+  DiscoveredCommand,
+  DiscoveredModule,
+  DiscoveredModuleFunction,
   DiscoverDevicesOptions
 } from "./tools/common.js";
 export type { MicrOSToolDefinition } from "./tools/definition.js";
+export type { AskUserInput } from "./tools/ask-user.js";
 export type { DiscoverCommandsInput } from "./tools/discover-commands.js";
 export type { DiscoverDevicesInput } from "./tools/discover-devices.js";
 export type { FilterDevicesInput } from "./tools/filter-devices.js";
 export type { ListDevicesInput } from "./tools/list-devices.js";
 export type { RunCommandInput } from "./tools/run-command.js";
+export { askUser, askUserTool } from "./tools/ask-user.js";
 export { discoverCommands, discoverCommandsTool } from "./tools/discover-commands.js";
 export { discoverDevices, discoverDevicesTool } from "./tools/discover-devices.js";
 export { filterDevices, filterDevicesTool } from "./tools/filter-devices.js";
