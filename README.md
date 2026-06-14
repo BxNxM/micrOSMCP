@@ -101,11 +101,11 @@ The MCP server exposes six tools.
 
 | Tool | Purpose |
 | --- | --- |
-| `filter_devices` | Main device selection tool: filter cached devices by name, UID, IP, module, function, command, feature text, and optional live status. Feature-query results are pruned to relevant modules. |
-| `list_devices` | Return a compact cached device inventory with device identity and known module names only. |
+| `filter_devices` | Main device selection tool: filter cached devices by name, UID, IP, note, module, function, command, feature text, and optional live status. Feature-query results are pruned to relevant modules. |
+| `list_devices` | Return a compact cached device inventory with device identity, note, and known module names only. |
 | `discover_devices` | Run a fresh `/24` network discovery, update the device cache, and refresh cached features for discovered devices. |
 | `run_command` | Run a command or command pipeline on one selected device. |
-| `ask_user` | Ask the human user for required missing details when tools and safe defaults are not enough. |
+| `set_device_note` | Add, append, replace, or clear persistent notes for a cached device. |
 | `discover_commands` | Run `modules`, then `<module> help`, to map and cache a device's command surface. |
 
 ### `run_command`
@@ -130,19 +130,19 @@ Array pipeline:
 
 Use read-only commands such as `version` for smoke tests. Other micrOS commands may change device state.
 
-### `ask_user`
+### `set_device_note`
 
-Use this only when the AI cannot safely proceed from cached device data, tool results, or a conservative default:
+Store persistent context about a device, such as location, attached peripherals, wiring, or command interpretation hints:
 
 ```json
 {
-  "question": "Which device should I target?",
-  "reason": "Two devices match the requested sensor module.",
-  "choices": ["TerraceSensor", "Cabinet"]
+  "deviceTag": "TerraceSensor",
+  "note": "Mounted on the terrace. DHT22 readings are outdoor temperature and humidity.",
+  "mode": "replace"
 }
 ```
 
-The tool returns a compact structured marker with `needsUserInput: true`. Clients should show the question to the user and wait for their answer before continuing.
+Use `mode: "append"` to add a line without replacing existing notes, or `mode: "clear"` to remove the note. Notes are stored in `data/device_feature_cache.json`, survive feature rediscovery, and are shown by `list_devices` and `filter_devices`.
 
 ### `filter_devices`
 
@@ -154,7 +154,7 @@ Use this as the primary device selection tool when you know part of a device nam
 }
 ```
 
-The query matches cached device identity fields and cached feature metadata, including module names, function names, command signatures, parameters, and raw help text. Matching devices include cached `features` when available. If the query matches the device identity, full features are returned; if it matches a feature/module/command, irrelevant modules and commands are removed to keep context compact.
+The query matches cached device identity fields, persistent device notes, and cached feature metadata, including module names, function names, command signatures, parameters, and raw help text. Matching devices include `deviceNote` plus cached `features` when available. If the query matches the device identity, full features are returned; if it matches a note, feature, module, or command, irrelevant modules and commands are removed to keep context compact.
 
 Check live status while filtering:
 
@@ -330,7 +330,7 @@ At MCP startup, the server runs an initialization pass that scans for devices, t
 data/device_feature_cache.json
 ```
 
-`list_devices` stays compact: it includes device identity plus known module names, but not function-level feature details. Use `filter_devices` for targeted feature lookup and `discover_commands` for full module/function details. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
+`list_devices` stays compact: it includes device identity, persistent notes, and known module names, but not function-level feature details. Use `filter_devices` for targeted feature lookup and `discover_commands` for full module/function details. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
 
 ## Docker
 

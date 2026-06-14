@@ -23,7 +23,7 @@
 
 .chat-settings {
   display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) minmax(140px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(140px, 1fr) auto auto;
   gap: 10px;
   align-items: end;
 }
@@ -63,6 +63,12 @@
 [data-chat-refresh-models] {
   min-height: 38px;
   padding: 0;
+}
+
+.chat-clear {
+  min-height: 38px;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 .chat-log {

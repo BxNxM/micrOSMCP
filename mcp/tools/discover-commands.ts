@@ -25,7 +25,7 @@ export type DiscoverCommandsInput = {
   concurrency?: number;
 };
 
-export type DeviceCommandDiscoverySuccess = CachedDeviceFeatures & {
+export type DeviceCommandDiscoverySuccess = Omit<CachedDeviceFeatures, "deviceNote"> & {
   ok: true;
   device: Device;
 };
@@ -104,7 +104,9 @@ export async function saveSuccessfulFeatureDiscoveries(results: DeviceCommandDis
       continue;
     }
 
+    const existingNote = cache[result.device.uid]?.deviceNote ?? "";
     cache[result.device.uid] = {
+      deviceNote: existingNote,
       discoveredAt: result.discoveredAt,
       modulesCommand: result.modulesCommand,
       rawModules: result.rawModules,

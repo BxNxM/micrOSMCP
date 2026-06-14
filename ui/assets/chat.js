@@ -278,13 +278,16 @@ function createChatElement() {
           <input data-chat-speak type="checkbox" />
           <span>Speak</span>
         </label>
+        <button data-chat-clear class="chat-clear" type="button" title="Clear chat" aria-label="Clear chat">
+          Clear
+        </button>
       </div>
     </div>
 
     <div data-chat-log class="chat-log" aria-live="polite"></div>
 
     <form data-chat-form class="chat-form">
-      <button data-chat-listen type="button" title="Listen" aria-label="Listen">
+      <button data-chat-listen type="button" title="Listen" aria-label="Listen" aria-pressed="false">
         <span aria-hidden="true">◉</span>
       </button>
       <textarea data-chat-input rows="2" placeholder="Ask about devices or request a tool call."></textarea>
@@ -304,6 +307,7 @@ export function initChat({ mount, onToolEvent } = {}) {
   const modelInput = root.querySelector("[data-chat-model]");
   const refreshModelsButton = root.querySelector("[data-chat-refresh-models]");
   const speakReplies = root.querySelector("[data-chat-speak]");
+  const clearChatButton = root.querySelector("[data-chat-clear]");
   const chatLog = root.querySelector("[data-chat-log]");
   const chatForm = root.querySelector("[data-chat-form]");
   const chatInput = root.querySelector("[data-chat-input]");
@@ -312,7 +316,9 @@ export function initChat({ mount, onToolEvent } = {}) {
 
   let chatMessages = [];
   let recognition = null;
+  let isListening = false;
   let saveTimer = null;
+  let chatVersion = 0;
 
   function renderChatMessageBody(body, role, text) {
     body.textContent = "";
@@ -368,7 +374,7 @@ export function initChat({ mount, onToolEvent } = {}) {
   }
 
   function speak(text) {
-    if (!speakReplies.checked || !("speechSynthesis" in window) || !text) {
+    if (isListening || !speakReplies.checked || !("speechSynthesis" in window) || !text) {
       return;
     }
 
@@ -380,6 +386,23 @@ export function initChat({ mount, onToolEvent } = {}) {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+  }
+
+  function clearChatHistory() {
+    chatVersion += 1;
+    chatMessages = [];
+    chatLog.textContent = "";
+    chatInput.value = "";
+    stopSpeaking();
+
+    if (isListening && recognition) {
+      recognition.stop();
+    }
+
+    sendChat.disabled = false;
+    listenButton.disabled = !recognition;
+    appendChatMessage("assistant", "Ready.");
+    chatInput.focus();
   }
 
   function selectedModel() {
@@ -538,15 +561,25 @@ export function initChat({ mount, onToolEvent } = {}) {
     sendChat.disabled = true;
     listenButton.disabled = true;
     const pending = appendChatMessage("assistant", "Thinking...");
+    const requestVersion = chatVersion;
 
     try {
       const payload = await callChat();
+
+      if (requestVersion !== chatVersion) {
+        return;
+      }
+
       const reply = payload.message || "Done.";
       setChatMessageText(pending, reply);
       chatMessages.push({ role: "assistant", content: reply });
       appendToolEvents(payload.toolEvents, pending);
       speak(reply);
     } catch (error) {
+      if (requestVersion !== chatVersion) {
+        return;
+      }
+
       pending.className = "chat-message error";
       setChatMessageText(pending, error instanceof Error ? error.message : "Chat request failed.");
     } finally {
@@ -570,10 +603,19 @@ export function initChat({ mount, onToolEvent } = {}) {
     recognition.interimResults = true;
 
     recognition.addEventListener("start", () => {
+      isListening = true;
+      stopSpeaking();
       listenButton.classList.add("listening");
+      listenButton.setAttribute("aria-pressed", "true");
+      listenButton.title = "Stop listening";
+      listenButton.setAttribute("aria-label", "Stop listening");
     });
     recognition.addEventListener("end", () => {
+      isListening = false;
       listenButton.classList.remove("listening");
+      listenButton.setAttribute("aria-pressed", "false");
+      listenButton.title = "Listen";
+      listenButton.setAttribute("aria-label", "Listen");
     });
     recognition.addEventListener("result", (event) => {
       const transcript = Array.from(event.results)
@@ -587,14 +629,28 @@ export function initChat({ mount, onToolEvent } = {}) {
     });
   }
 
-  function startListening() {
-    if (recognition) {
+  function toggleListening() {
+    if (!recognition) {
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+      return;
+    }
+
+    try {
+      stopSpeaking();
       recognition.start();
+    } catch (error) {
+      isListening = false;
+      listenButton.classList.remove("listening");
     }
   }
 
   chatForm.addEventListener("submit", sendChatMessage);
-  listenButton.addEventListener("click", startListening);
+  listenButton.addEventListener("click", toggleListening);
+  clearChatButton.addEventListener("click", clearChatHistory);
   refreshModelsButton.addEventListener("click", loadAvailableModels);
   speakReplies.addEventListener("change", () => {
     if (!speakReplies.checked) {

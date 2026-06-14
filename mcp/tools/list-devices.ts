@@ -17,6 +17,7 @@ export async function listDevices(_input: ListDevicesInput = {}) {
 
     return {
       ...device,
+      deviceNote: featureCache[device.uid]?.deviceNote ?? "",
       moduleCount: modules.length,
       modules,
       featuresDiscoveredAt: featureCache[device.uid]?.discoveredAt ?? null
@@ -34,7 +35,7 @@ export async function listDevices(_input: ListDevicesInput = {}) {
 export const listDevicesTool = defineTool<ListDevicesInput>({
   name: "list_devices",
   title: "List Devices",
-  description: "Return a compact cached device inventory with device identity and known module names only.",
+  description: "Return a compact cached device inventory with identity, persistent note, and known module names only.",
   inputSchema: {},
   handler: () => listDevices()
 });

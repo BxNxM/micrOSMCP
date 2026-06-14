@@ -11,7 +11,6 @@ import {
   parseModules,
   pruneDeviceFeaturesForQuery
 } from "../dist/mcp/tools/common.js";
-import { askUser } from "../dist/mcp/tools/ask-user.js";
 import { toolDefinitions } from "../dist/mcp/tools/registry.js";
 
 const requiredPaths = [
@@ -26,10 +25,10 @@ const requiredPaths = [
   "mcp/index.ts",
   "mcp/mcp-tools.ts",
   "mcp/tools.ts",
-  "mcp/tools/ask-user.ts",
   "mcp/tools/common.ts",
   "mcp/tools/definition.ts",
   "mcp/tools/registry.ts",
+  "mcp/tools/set-device-note.ts",
   "ui/assets/app.js",
   "ui/assets/chat.css",
   "ui/assets/chat.js",
@@ -67,7 +66,7 @@ function testToolRegistry() {
   const names = toolDefinitions.map((tool) => tool.name);
   assert.deepEqual([...new Set(names)], names, "tool names must be unique");
   assert.equal(names[0], "filter_devices", "filter_devices should be the first/default device selection tool");
-  assert.ok(names.includes("ask_user"), "ask_user should be available for required human clarification");
+  assert.ok(names.includes("set_device_note"), "set_device_note should be available for persistent device context");
 
   for (const tool of toolDefinitions) {
     assert.equal(typeof tool.name, "string", "tool name must be a string");
@@ -98,18 +97,9 @@ function testHelpParsing() {
   ]);
 }
 
-async function testAskUserTool() {
-  assert.deepEqual(await askUser({ question: "Which device should I target?", choices: ["A", "B"] }), {
-    ok: true,
-    needsUserInput: true,
-    question: "Which device should I target?",
-    reason: null,
-    choices: ["A", "B"]
-  });
-}
-
 function testFeatureSearchFields() {
   const features = {
+    deviceNote: "Mounted on the terrace near the DHT22 sensor.",
     discoveredAt: "2026-06-14T00:00:00.000Z",
     modulesCommand: "modules",
     rawModules: ["['dht22', 'rgb']"],
@@ -166,6 +156,7 @@ function testFeatureSearchFields() {
   const pruned = pruneDeviceFeaturesForQuery(features, "dht22");
 
   assert.ok(fields.includes("TerraceSensor"), "device fields should include FUID");
+  assert.ok(fields.includes("Mounted on the terrace near the DHT22 sensor."), "device fields should include notes");
   assert.ok(fields.includes("dht22"), "device fields should include discovered module names");
   assert.ok(fields.includes("dht22 measure temperature=True"), "device fields should include command text");
   assert.deepEqual(pruned.modules.map((module) => module.name), ["dht22"], "feature pruning should keep matching modules only");
@@ -187,6 +178,7 @@ async function testListDevicesCompactShape() {
     featureCachePath,
     JSON.stringify({
       micr123OS: {
+        deviceNote: "Mounted on the terrace.",
         discoveredAt: "2026-06-14T00:00:00.000Z",
         modulesCommand: "modules",
         rawModules: ["['dht22']"],
@@ -238,11 +230,184 @@ async function testListDevicesCompactShape() {
   const device = parsed.devices.find((entry) => entry.uid === "micr123OS");
 
   assert.ok(device, "expected test device in compact list");
+  assert.equal(device.deviceNote, "Mounted on the terrace.", "list_devices should expose device notes");
   assert.deepEqual(device.modules, ["dht22"], "list_devices should expose known module names");
   assert.equal(device.moduleCount, 1, "list_devices should expose module count");
   assert.equal("features" in device, false, "list_devices should not expose full feature details");
   assert.equal("featureCache" in parsed, false, "list_devices should not expose the full feature cache");
   assert.equal("micrOSCache" in parsed, false, "list_devices should not duplicate the raw device cache");
+}
+
+async function testFilterDevicesNoteShape() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-filter-test-"));
+  const deviceCachePath = join(tempDir, "devices.json");
+  const featureCachePath = join(tempDir, "features.json");
+
+  writeFileSync(
+    deviceCachePath,
+    JSON.stringify({
+      micr123OS: ["10.0.1.20", 9008, "TerraceSensor"]
+    })
+  );
+  writeFileSync(
+    featureCachePath,
+    JSON.stringify({
+      micr123OS: {
+        deviceNote: "Outdoor temperature sensor.",
+        discoveredAt: "2026-06-14T00:00:00.000Z",
+        modulesCommand: "modules",
+        rawModules: ["['dht22']"],
+        modules: [
+          {
+            name: "dht22",
+            helpCommand: "dht22 help",
+            rawHelp: ["measure"],
+            functions: []
+          }
+        ],
+        commands: []
+      }
+    })
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      "const mod = await import('./dist/mcp/tools/filter-devices.js'); const result = await mod.filterDevices({ query: 'temperature' }); console.log(JSON.stringify(result));"
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MICROS_DEVICE_CACHE_PATH: deviceCachePath,
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, `filterDevices note shape check failed:\n${result.stdout}\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout);
+  const device = parsed.devices[0];
+
+  assert.equal(device.deviceNote, "Outdoor temperature sensor.", "filter_devices should expose deviceNote at device level");
+  assert.ok(device.features, "filter_devices should include matched features");
+  assert.equal("deviceNote" in device.features, false, "filter_devices should not duplicate deviceNote inside features");
+  assert.deepEqual(
+    device.features.modules.map((module) => module.name),
+    ["dht22"],
+    "single-module note matches should expose that module"
+  );
+}
+
+async function testFilterDevicesNoteMatchKeepsAllFeatures() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-filter-note-test-"));
+  const deviceCachePath = join(tempDir, "devices.json");
+  const featureCachePath = join(tempDir, "features.json");
+
+  writeFileSync(
+    deviceCachePath,
+    JSON.stringify({
+      micr123OS: ["10.0.1.20", 9008, "TerraceSensor"]
+    })
+  );
+  writeFileSync(
+    featureCachePath,
+    JSON.stringify({
+      micr123OS: {
+        deviceNote: "Outdoor temperature and humidity sensor.",
+        discoveredAt: "2026-06-14T00:00:00.000Z",
+        modulesCommand: "modules",
+        rawModules: ["['dht22', 'task']"],
+        modules: [
+          {
+            name: "dht22",
+            helpCommand: "dht22 help",
+            rawHelp: ["measure"],
+            functions: []
+          },
+          {
+            name: "task",
+            helpCommand: "task help",
+            rawHelp: ["schedule"],
+            functions: []
+          }
+        ],
+        commands: []
+      }
+    })
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      "const mod = await import('./dist/mcp/tools/filter-devices.js'); const result = await mod.filterDevices({ query: 'temperature' }); console.log(JSON.stringify(result));"
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MICROS_DEVICE_CACHE_PATH: deviceCachePath,
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, `filterDevices note match feature check failed:\n${result.stdout}\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout);
+  const device = parsed.devices[0];
+
+  assert.deepEqual(
+    device.features.modules.map((module) => module.name),
+    ["dht22", "task"],
+    "note matches should keep all modules so AI can choose the right command"
+  );
+  assert.equal("deviceNote" in device.features, false, "note matches should still avoid nested deviceNote duplication");
+}
+
+async function testSetDeviceNoteTool() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-note-test-"));
+  const deviceCachePath = join(tempDir, "devices.json");
+  const featureCachePath = join(tempDir, "features.json");
+
+  writeFileSync(
+    deviceCachePath,
+    JSON.stringify({
+      micr123OS: ["10.0.1.20", 9008, "TerraceSensor"]
+    })
+  );
+  writeFileSync(featureCachePath, "{}");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      [
+        "const note = await import('./dist/mcp/tools/set-device-note.js');",
+        "const discover = await import('./dist/mcp/tools/discover-commands.js');",
+        "const common = await import('./dist/mcp/tools/common.js');",
+        "await note.setDeviceNote({ deviceTag: 'TerraceSensor', note: 'Mounted on the terrace.', mode: 'replace' });",
+        "await discover.saveSuccessfulFeatureDiscoveries([{ ok: true, device: { uid: 'micr123OS', ip: '10.0.1.20', port: 9008, fuid: 'TerraceSensor' }, discoveredAt: '2026-06-14T00:00:00.000Z', modulesCommand: 'modules', rawModules: ['dht22'], modules: [], commands: [] }]);",
+        "const cache = await common.readDeviceFeatureCache();",
+        "console.log(JSON.stringify(cache.micr123OS));"
+      ].join(" ")
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MICROS_DEVICE_CACHE_PATH: deviceCachePath,
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, `setDeviceNote persistence check failed:\n${result.stdout}\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout);
+
+  assert.equal(parsed.deviceNote, "Mounted on the terrace.", "device note should survive feature rediscovery");
+  assert.equal(parsed.discoveredAt, "2026-06-14T00:00:00.000Z", "feature discovery data should still update");
 }
 
 testRequiredProjectFiles();
@@ -251,8 +416,10 @@ testToolRegistry();
 testCommandParsing();
 testModuleParsing();
 testHelpParsing();
-await testAskUserTool();
 testFeatureSearchFields();
 await testListDevicesCompactShape();
+await testFilterDevicesNoteShape();
+await testFilterDevicesNoteMatchKeepsAllFeatures();
+await testSetDeviceNoteTool();
 
 console.log("MCP server tests passed.");

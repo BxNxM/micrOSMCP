@@ -11,6 +11,7 @@ export type Device = {
   port: number;
   fuid: string;
   status?: DeviceStatus | "unknown";
+  deviceNote?: string;
   features?: CachedDeviceFeatures;
 };
 
@@ -38,7 +39,8 @@ export type DiscoveredCommand = {
 };
 
 export type CachedDeviceFeatures = {
-  discoveredAt: string;
+  deviceNote: string;
+  discoveredAt: string | null;
   modulesCommand: string;
   rawModules: string[];
   modules: DiscoveredModule[];
@@ -104,6 +106,17 @@ function stringArray(input: unknown) {
   return Array.isArray(input) ? input.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+export function emptyCachedDeviceFeatures(deviceNote = ""): CachedDeviceFeatures {
+  return {
+    deviceNote,
+    discoveredAt: null,
+    modulesCommand: "modules",
+    rawModules: [],
+    modules: [],
+    commands: []
+  };
+}
+
 function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return {};
@@ -117,12 +130,9 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
     }
 
     const entry = value as Record<string, unknown>;
+    const deviceNote = typeof entry.deviceNote === "string" ? entry.deviceNote : "";
     const discoveredAt = typeof entry.discoveredAt === "string" ? entry.discoveredAt : null;
-    const modulesCommand = typeof entry.modulesCommand === "string" ? entry.modulesCommand : null;
-
-    if (!discoveredAt || !modulesCommand) {
-      continue;
-    }
+    const modulesCommand = typeof entry.modulesCommand === "string" ? entry.modulesCommand : "modules";
 
     const modules = Array.isArray(entry.modules)
       ? entry.modules.flatMap((moduleEntry): DiscoveredModule[] => {
@@ -202,6 +212,7 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
       : [];
 
     normalized[uid] = {
+      deviceNote,
       discoveredAt,
       modulesCommand,
       rawModules: stringArray(entry.rawModules),
@@ -223,10 +234,15 @@ export function cacheToDevices(cache: DeviceCache): Device[] {
 }
 
 export function attachDeviceFeatures(devices: Device[], featureCache: DeviceFeatureCache) {
-  return devices.map((device) => ({
-    ...device,
-    ...(featureCache[device.uid] ? { features: featureCache[device.uid] } : {})
-  }));
+  return devices.map((device) => {
+    const features = featureCache[device.uid];
+
+    return {
+      ...device,
+      deviceNote: features?.deviceNote ?? "",
+      ...(features ? { features } : {})
+    };
+  });
 }
 
 export async function readCachedDevicesWithFeatures() {
@@ -262,7 +278,8 @@ export function deviceFeatureSearchFields(features?: CachedDeviceFeatures) {
   }
 
   return [
-    features.discoveredAt,
+    features.deviceNote,
+    ...(features.discoveredAt ? [features.discoveredAt] : []),
     features.modulesCommand,
     ...features.rawModules,
     ...features.modules.flatMap((module) => [
