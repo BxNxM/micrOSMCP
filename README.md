@@ -377,6 +377,28 @@ Install an exported image on another machine:
 docker load -i dist/micros-mcp_latest.tar.gz
 ```
 
+Publish a public Docker Hub image:
+
+```sh
+docker login
+docker build -t bxnxm/micros-mcp:latest .
+docker push bxnxm/micros-mcp:latest
+```
+
+For a public multi-architecture image that supports common 64-bit Intel/AMD and ARM hosts, build and push with `buildx`:
+
+```sh
+docker login
+docker buildx create --use
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t bxnxm/micros-mcp:latest \
+  --push \
+  .
+```
+
+The archive workflow above exports the image for the local Docker builder's platform. The `buildx` publish flow creates a registry manifest so compatible hosts pull the right architecture automatically.
+
 Run as stdio MCP in Docker:
 
 ```sh
