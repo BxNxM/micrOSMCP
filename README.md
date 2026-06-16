@@ -1,6 +1,8 @@
 ![test-webui](./media/mcp-test-webui.png?raw=true)
 ![example1](./media/mcp-tools.png?raw=true)
 
+[![DockerHub](https://img.shields.io/badge/DockerHub-micrOS%20MCP-blue)](https://hub.docker.com/r/bxnxm/micros-mcp)
+
 # micrOSMCP
 
 Standalone TypeScript MCP server and browser tester UI for micrOS devices. Use it to discover devices, inspect the device cache, run micrOS commands, and discover each device's available module commands.
