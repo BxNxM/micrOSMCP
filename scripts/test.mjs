@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,6 +12,8 @@ import {
   pruneDeviceFeaturesForQuery
 } from "../dist/mcp/tools/common.js";
 import { toolDefinitions } from "../dist/mcp/tools/registry.js";
+import { accessUrls } from "../dist/ui/server.js";
+import { audioRecordingSupport, speechRecognitionSupport } from "../ui/assets/chat.js";
 
 const requiredPaths = [
   "AGENTS.md",
@@ -55,9 +57,130 @@ function testRequiredProjectFiles() {
   assert.deepEqual(missing, [], `missing required project files: ${missing.join(", ")}`);
 }
 
+function testDockerExcludesRuntimeData() {
+  const dockerignore = readFileSync(".dockerignore", "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  const dockerfile = readFileSync("Dockerfile", "utf8");
+
+  assert.ok(
+    dockerignore.includes("data") || dockerignore.includes("data/") || dockerignore.includes("data/**"),
+    ".dockerignore must exclude local data/ runtime state from the Docker build context"
+  );
+  assert.doesNotMatch(dockerfile, /^\s*COPY\s+(?:--\S+\s+)*data(?:\s|\/)/m, "Dockerfile must not copy local data/");
+  assert.match(dockerfile, /^\s*RUN\s+mkdir\s+-p\s+data\s*$/m, "Docker image may only create an empty data directory");
+}
+
 function testCliHelpEntrypoints() {
   assertCommand("node", ["scripts/start.mjs", "--help"], /Usage:/);
   assertCommand("node", ["scripts/docker-build.mjs", "--help"], /Usage:/);
+}
+
+function testNetworkPrefixEnvironmentOverride() {
+  const result = spawnSync(
+    "node",
+    [
+      "--input-type=module",
+      "-e",
+      "const mod = await import('./dist/mcp/tools/common.js'); console.log(JSON.stringify(mod.resolveNetworkPrefix()));"
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MICROS_NETWORK_PREFIX: "10.0.1"
+      }
+    }
+  );
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  assert.equal(result.status, 0, `network prefix env test failed:\n${result.stdout}\n${result.stderr}`);
+  assert.deepEqual(
+    JSON.parse(result.stdout),
+    { networkPrefix: "10.0.1", source: "injected" },
+    "MICROS_NETWORK_PREFIX should mark discovery as injected"
+  );
+}
+
+function testUiAccessUrls() {
+  assert.deepEqual(
+    accessUrls("0.0.0.0", 3333, ["192.168.1.50", "10.0.1.42"], "10.0.1"),
+    ["http://127.0.0.1:3333", "http://10.0.1.42:3333", "http://192.168.1.50:3333"],
+    "wildcard UI bind should print localhost and prioritize the micrOS LAN address"
+  );
+  assert.deepEqual(
+    accessUrls("127.0.0.1", 3333, ["10.0.1.42"], "10.0.1"),
+    ["http://127.0.0.1:3333"],
+    "explicit loopback UI bind should only print loopback"
+  );
+}
+
+function testSpeechRecognitionSupport() {
+  class FakeSpeechRecognition {}
+  class FakeMediaRecorder {}
+  const mediaDevices = {
+    async getUserMedia() {
+      return {};
+    }
+  };
+
+  assert.equal(
+    speechRecognitionSupport({
+      webkitSpeechRecognition: FakeSpeechRecognition,
+      isSecureContext: false,
+      protocol: "http:",
+      hostname: "10.0.1.42"
+    }).ok,
+    false,
+    "microphone should be unavailable on insecure LAN origins"
+  );
+  assert.equal(
+    speechRecognitionSupport({
+      webkitSpeechRecognition: FakeSpeechRecognition,
+      isSecureContext: true,
+      protocol: "http:",
+      hostname: "10.0.1.42"
+    }).ok,
+    true,
+    "microphone should be available when the LAN origin is secure"
+  );
+  assert.equal(
+    speechRecognitionSupport({
+      webkitSpeechRecognition: FakeSpeechRecognition,
+      isSecureContext: false,
+      protocol: "http:",
+      hostname: "127.0.0.1"
+    }).ok,
+    true,
+    "microphone should stay available on localhost"
+  );
+  assert.equal(
+    audioRecordingSupport({
+      mediaDevices,
+      MediaRecorder: FakeMediaRecorder,
+      isSecureContext: false,
+      protocol: "http:",
+      hostname: "127.0.0.1"
+    }).ok,
+    true,
+    "Safari recording fallback should be available on localhost"
+  );
+  assert.equal(
+    audioRecordingSupport({
+      mediaDevices,
+      MediaRecorder: FakeMediaRecorder,
+      isSecureContext: false,
+      protocol: "http:",
+      hostname: "10.0.1.42",
+      port: "3333"
+    }).ok,
+    false,
+    "Safari recording fallback should still require HTTPS or localhost"
+  );
 }
 
 function testToolRegistry() {
@@ -167,6 +290,7 @@ async function testListDevicesCompactShape() {
   const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-test-"));
   const deviceCachePath = join(tempDir, "devices.json");
   const featureCachePath = join(tempDir, "features.json");
+  const notesCachePath = join(tempDir, "notes.json");
 
   writeFileSync(
     deviceCachePath,
@@ -208,6 +332,12 @@ async function testListDevicesCompactShape() {
       }
     })
   );
+  writeFileSync(
+    notesCachePath,
+    JSON.stringify({
+      micr123OS: "Mounted on the terrace."
+    })
+  );
 
   const result = spawnSync(
     process.execPath,
@@ -220,7 +350,8 @@ async function testListDevicesCompactShape() {
       env: {
         ...process.env,
         MICROS_DEVICE_CACHE_PATH: deviceCachePath,
-        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath,
+        MICROS_DEVICE_NOTES_CACHE_PATH: notesCachePath
       }
     }
   );
@@ -242,6 +373,7 @@ async function testFilterDevicesNoteShape() {
   const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-filter-test-"));
   const deviceCachePath = join(tempDir, "devices.json");
   const featureCachePath = join(tempDir, "features.json");
+  const notesCachePath = join(tempDir, "notes.json");
 
   writeFileSync(
     deviceCachePath,
@@ -269,6 +401,12 @@ async function testFilterDevicesNoteShape() {
       }
     })
   );
+  writeFileSync(
+    notesCachePath,
+    JSON.stringify({
+      TerraceSensor: "Outdoor temperature sensor."
+    })
+  );
 
   const result = spawnSync(
     process.execPath,
@@ -281,7 +419,8 @@ async function testFilterDevicesNoteShape() {
       env: {
         ...process.env,
         MICROS_DEVICE_CACHE_PATH: deviceCachePath,
-        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath,
+        MICROS_DEVICE_NOTES_CACHE_PATH: notesCachePath
       }
     }
   );
@@ -293,6 +432,7 @@ async function testFilterDevicesNoteShape() {
   assert.equal(device.deviceNote, "Outdoor temperature sensor.", "filter_devices should expose deviceNote at device level");
   assert.ok(device.features, "filter_devices should include matched features");
   assert.equal("deviceNote" in device.features, false, "filter_devices should not duplicate deviceNote inside features");
+  assert.equal("deviceName" in device.features, false, "filter_devices should not duplicate deviceName inside features");
   assert.deepEqual(
     device.features.modules.map((module) => module.name),
     ["dht22"],
@@ -304,6 +444,7 @@ async function testFilterDevicesNoteMatchKeepsAllFeatures() {
   const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-filter-note-test-"));
   const deviceCachePath = join(tempDir, "devices.json");
   const featureCachePath = join(tempDir, "features.json");
+  const notesCachePath = join(tempDir, "notes.json");
 
   writeFileSync(
     deviceCachePath,
@@ -337,6 +478,12 @@ async function testFilterDevicesNoteMatchKeepsAllFeatures() {
       }
     })
   );
+  writeFileSync(
+    notesCachePath,
+    JSON.stringify({
+      TerraceSensor: "Outdoor temperature and humidity sensor."
+    })
+  );
 
   const result = spawnSync(
     process.execPath,
@@ -349,7 +496,8 @@ async function testFilterDevicesNoteMatchKeepsAllFeatures() {
       env: {
         ...process.env,
         MICROS_DEVICE_CACHE_PATH: deviceCachePath,
-        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath,
+        MICROS_DEVICE_NOTES_CACHE_PATH: notesCachePath
       }
     }
   );
@@ -364,12 +512,107 @@ async function testFilterDevicesNoteMatchKeepsAllFeatures() {
     "note matches should keep all modules so AI can choose the right command"
   );
   assert.equal("deviceNote" in device.features, false, "note matches should still avoid nested deviceNote duplication");
+  assert.equal("deviceName" in device.features, false, "note matches should still avoid nested deviceName duplication");
+}
+
+async function testFilterDevicesExactModuleMatchPrunesFeatures() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-filter-module-test-"));
+  const deviceCachePath = join(tempDir, "devices.json");
+  const featureCachePath = join(tempDir, "features.json");
+  const notesCachePath = join(tempDir, "notes.json");
+
+  writeFileSync(
+    deviceCachePath,
+    JSON.stringify({
+      micr123OS: ["10.0.1.20", 9008, "TerraceSensor"]
+    })
+  );
+  writeFileSync(
+    featureCachePath,
+    JSON.stringify({
+      micr123OS: {
+        deviceName: "TerraceSensor",
+        discoveredAt: "2026-06-14T00:00:00.000Z",
+        modulesCommand: "modules",
+        rawModules: ["['dht22', 'task']"],
+        modules: [
+          {
+            name: "dht22",
+            helpCommand: "dht22 help",
+            rawHelp: ["measure"],
+            functions: []
+          },
+          {
+            name: "task",
+            helpCommand: "task help",
+            rawHelp: ["schedule"],
+            functions: []
+          }
+        ],
+        commands: [
+          {
+            module: "dht22",
+            function: "measure",
+            parameters: [],
+            command: "dht22 measure",
+            signature: "measure"
+          },
+          {
+            module: "task",
+            function: "schedule",
+            parameters: [],
+            command: "task schedule",
+            signature: "schedule"
+          }
+        ]
+      }
+    })
+  );
+  writeFileSync(
+    notesCachePath,
+    JSON.stringify({
+      TerraceSensor: "dht22 is a temperature and humidity sensor."
+    })
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      "const mod = await import('./dist/mcp/tools/filter-devices.js'); const result = await mod.filterDevices({ query: 'dht22' }); console.log(JSON.stringify(result));"
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MICROS_DEVICE_CACHE_PATH: deviceCachePath,
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath,
+        MICROS_DEVICE_NOTES_CACHE_PATH: notesCachePath
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, `filterDevices exact module match check failed:\n${result.stdout}\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout);
+  const device = parsed.devices[0];
+
+  assert.deepEqual(
+    device.features.modules.map((module) => module.name),
+    ["dht22"],
+    "exact module name matches should expose only that module"
+  );
+  assert.deepEqual(
+    device.features.commands.map((command) => command.module),
+    ["dht22"],
+    "exact module name matches should expose only commands for that module"
+  );
 }
 
 async function testSetDeviceNoteTool() {
   const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-note-test-"));
   const deviceCachePath = join(tempDir, "devices.json");
   const featureCachePath = join(tempDir, "features.json");
+  const notesCachePath = join(tempDir, "notes.json");
 
   writeFileSync(
     deviceCachePath,
@@ -378,19 +621,23 @@ async function testSetDeviceNoteTool() {
     })
   );
   writeFileSync(featureCachePath, "{}");
+  writeFileSync(notesCachePath, "{}");
 
   const result = spawnSync(
     process.execPath,
     [
       "-e",
       [
+        "const fs = await import('node:fs');",
         "const note = await import('./dist/mcp/tools/set-device-note.js');",
         "const discover = await import('./dist/mcp/tools/discover-commands.js');",
         "const common = await import('./dist/mcp/tools/common.js');",
         "await note.setDeviceNote({ deviceTag: 'TerraceSensor', note: 'Mounted on the terrace.', mode: 'replace' });",
         "await discover.saveSuccessfulFeatureDiscoveries([{ ok: true, device: { uid: 'micr123OS', ip: '10.0.1.20', port: 9008, fuid: 'TerraceSensor' }, discoveredAt: '2026-06-14T00:00:00.000Z', modulesCommand: 'modules', rawModules: ['dht22'], modules: [], commands: [] }]);",
         "const cache = await common.readDeviceFeatureCache();",
-        "console.log(JSON.stringify(cache.micr123OS));"
+        "const notes = await common.readDeviceNotesCache();",
+        "const rawFeatures = JSON.parse(fs.readFileSync(process.env.MICROS_DEVICE_FEATURE_CACHE_PATH, 'utf8'));",
+        "console.log(JSON.stringify({ features: cache.micr123OS, notes, rawFeatures: rawFeatures.micr123OS }));"
       ].join(" ")
     ],
     {
@@ -398,7 +645,8 @@ async function testSetDeviceNoteTool() {
       env: {
         ...process.env,
         MICROS_DEVICE_CACHE_PATH: deviceCachePath,
-        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath,
+        MICROS_DEVICE_NOTES_CACHE_PATH: notesCachePath
       }
     }
   );
@@ -406,12 +654,83 @@ async function testSetDeviceNoteTool() {
   assert.equal(result.status, 0, `setDeviceNote persistence check failed:\n${result.stdout}\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout);
 
-  assert.equal(parsed.deviceNote, "Mounted on the terrace.", "device note should survive feature rediscovery");
-  assert.equal(parsed.discoveredAt, "2026-06-14T00:00:00.000Z", "feature discovery data should still update");
+  assert.equal(parsed.features.deviceNote, "Mounted on the terrace.", "device note should survive feature rediscovery");
+  assert.equal(parsed.features.discoveredAt, "2026-06-14T00:00:00.000Z", "feature discovery data should still update");
+  assert.equal(parsed.notes.TerraceSensor, "Mounted on the terrace.", "device note should be stored by device name");
+  assert.equal("micr123OS" in parsed.notes, false, "device note should not keep the UID key after writing");
+  assert.equal("deviceNote" in parsed.rawFeatures, false, "feature cache should not persist device notes");
+  assert.equal(parsed.rawFeatures.deviceName, "TerraceSensor", "feature cache should persist device name");
+}
+
+async function testLegacyFeatureNotesMigrateOnFeatureSave() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-legacy-note-test-"));
+  const deviceCachePath = join(tempDir, "devices.json");
+  const featureCachePath = join(tempDir, "features.json");
+  const notesCachePath = join(tempDir, "notes.json");
+
+  writeFileSync(
+    deviceCachePath,
+    JSON.stringify({
+      micr123OS: ["10.0.1.20", 9008, "TerraceSensor"]
+    })
+  );
+  writeFileSync(
+    featureCachePath,
+    JSON.stringify({
+      micr123OS: {
+        deviceNote: "Legacy terrace note.",
+        discoveredAt: "2026-06-13T00:00:00.000Z",
+        modulesCommand: "modules",
+        rawModules: [],
+        modules: [],
+        commands: []
+      }
+    })
+  );
+  writeFileSync(notesCachePath, "{}");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      [
+        "const fs = await import('node:fs');",
+        "const discover = await import('./dist/mcp/tools/discover-commands.js');",
+        "const common = await import('./dist/mcp/tools/common.js');",
+        "await discover.saveSuccessfulFeatureDiscoveries([{ ok: true, device: { uid: 'micr123OS', ip: '10.0.1.20', port: 9008, fuid: 'TerraceSensor' }, discoveredAt: '2026-06-14T00:00:00.000Z', modulesCommand: 'modules', rawModules: ['dht22'], modules: [], commands: [] }]);",
+        "const cache = await common.readDeviceFeatureCache();",
+        "const notes = await common.readDeviceNotesCache();",
+        "const rawFeatures = JSON.parse(fs.readFileSync(process.env.MICROS_DEVICE_FEATURE_CACHE_PATH, 'utf8'));",
+        "console.log(JSON.stringify({ features: cache.micr123OS, notes, rawFeatures: rawFeatures.micr123OS }));"
+      ].join(" ")
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MICROS_DEVICE_CACHE_PATH: deviceCachePath,
+        MICROS_DEVICE_FEATURE_CACHE_PATH: featureCachePath,
+        MICROS_DEVICE_NOTES_CACHE_PATH: notesCachePath
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, `legacy note migration check failed:\n${result.stdout}\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout);
+
+  assert.equal(parsed.features.deviceNote, "Legacy terrace note.", "legacy device note should remain in responses");
+  assert.equal(parsed.notes.TerraceSensor, "Legacy terrace note.", "legacy device note should migrate to device name key");
+  assert.equal("micr123OS" in parsed.notes, false, "legacy UID note key should be removed after migration");
+  assert.equal("deviceNote" in parsed.rawFeatures, false, "migrated feature cache should not retain device notes");
+  assert.equal(parsed.rawFeatures.deviceName, "TerraceSensor", "migrated feature cache should retain device name");
 }
 
 testRequiredProjectFiles();
+testDockerExcludesRuntimeData();
 testCliHelpEntrypoints();
+testNetworkPrefixEnvironmentOverride();
+testUiAccessUrls();
+testSpeechRecognitionSupport();
 testToolRegistry();
 testCommandParsing();
 testModuleParsing();
@@ -420,6 +739,8 @@ testFeatureSearchFields();
 await testListDevicesCompactShape();
 await testFilterDevicesNoteShape();
 await testFilterDevicesNoteMatchKeepsAllFeatures();
+await testFilterDevicesExactModuleMatchPrunesFeatures();
 await testSetDeviceNoteTool();
+await testLegacyFeatureNotesMigrateOnFeatureSave();
 
 console.log("MCP server tests passed.");

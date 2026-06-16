@@ -5,4 +5,5 @@ dist/
 data/device_conn_cache.json
 data/ui_chat_config.json
 data/device_feature_cache.json
+data/device_notes_cache.json
 package-lock.json

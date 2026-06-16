@@ -43,15 +43,20 @@ Modes:
   test-ui  ${modes["test-ui"].description}
 
 Environment:
-  MICROS_DEVICE_CACHE_PATH  Override data/device_conn_cache.json.
-  MICROS_CHAT_CONFIG_PATH   Override data/ui_chat_config.json for the tester web app.
-  HOST                      UI bind host. Default: 127.0.0.1 locally, 0.0.0.0 in Docker.
-  PORT                      UI port. Default: 3333.
+  MICROS_DEVICE_CACHE_PATH          Override data/device_conn_cache.json.
+  MICROS_DEVICE_FEATURE_CACHE_PATH  Override data/device_feature_cache.json.
+  MICROS_DEVICE_NOTES_CACHE_PATH    Override data/device_notes_cache.json.
+  MICROS_NETWORK_PREFIX             Override automatic /24 discovery prefix, e.g. 10.0.1.
+  MICROS_CHAT_CONFIG_PATH           Override data/ui_chat_config.json for the tester web app.
+  HOST                              UI bind host. Default: 0.0.0.0.
+  PORT                              UI port. Default: 3333.
 
 Examples:
   MICROS_DEVICE_CACHE_PATH=/tmp/device_conn_cache.json npm run start
+  MICROS_DEVICE_NOTES_CACHE_PATH=/tmp/device_notes_cache.json npm run start
+  MICROS_NETWORK_PREFIX=10.0.1 npm run start
   MICROS_CHAT_CONFIG_PATH=/tmp/ui_chat_config.json npm run start -- ui
-  HOST=0.0.0.0 PORT=3333 npm run start -- ui
+  HOST=127.0.0.1 PORT=3333 npm run start -- ui
 
 Build first:
   npm run build

@@ -13,6 +13,11 @@ type ChatRequestBody = {
   messages?: unknown;
 };
 
+type TranscribeRequestBody = {
+  apiKey?: unknown;
+  audio?: unknown;
+};
+
 export type ChatConfig = {
   apiKey: string;
   model: string;
@@ -81,6 +86,26 @@ function sortModelIds(modelIds: string[]) {
   });
 }
 
+function audioExtension(mimeType: string) {
+  if (mimeType.includes("mp4")) {
+    return "mp4";
+  }
+
+  if (mimeType.includes("mpeg")) {
+    return "mp3";
+  }
+
+  if (mimeType.includes("wav")) {
+    return "wav";
+  }
+
+  if (mimeType.includes("ogg")) {
+    return "ogg";
+  }
+
+  return "webm";
+}
+
 export async function listOpenAiModels(input: unknown = {}) {
   const savedConfig = await readChatConfig();
   const body = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
@@ -116,6 +141,52 @@ export async function listOpenAiModels(input: unknown = {}) {
     models,
     selectedModel,
     needsToken: false
+  };
+}
+
+export async function transcribeAudio(body: TranscribeRequestBody) {
+  const savedConfig = await readChatConfig();
+  const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : savedConfig.apiKey;
+
+  if (!apiKey) {
+    throw new Error("Expected an OpenAI API token.");
+  }
+
+  const audio = body.audio && typeof body.audio === "object" ? (body.audio as Record<string, unknown>) : {};
+  const base64 = typeof audio.base64 === "string" ? audio.base64 : "";
+  const mimeType = typeof audio.type === "string" && audio.type.trim() ? audio.type.trim() : "audio/webm";
+
+  if (!base64) {
+    throw new Error("Expected recorded audio.");
+  }
+
+  const bytes = Buffer.from(base64, "base64");
+  const formData = new FormData();
+  formData.set("model", process.env.MICROS_TRANSCRIPTION_MODEL ?? "whisper-1");
+  formData.set(
+    "file",
+    new Blob([bytes], { type: mimeType }),
+    typeof audio.filename === "string" && audio.filename.trim()
+      ? audio.filename.trim()
+      : `microsmcp-recording.${audioExtension(mimeType)}`
+  );
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`
+    },
+    body: formData
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = payload?.error?.message ?? `OpenAI transcription request failed with ${response.status}.`;
+    throw new Error(message);
+  }
+
+  return {
+    text: typeof payload?.text === "string" ? payload.text : ""
   };
 }
 

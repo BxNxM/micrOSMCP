@@ -12,13 +12,16 @@ npm install
 npm run start:ui
 ```
 
-Open the printed URL, usually:
+Open one of the printed URLs. The UI binds on all interfaces by default and prints localhost plus any detected LAN addresses, such as:
 
 ```text
 http://127.0.0.1:3333
+http://10.0.1.42:3333
 ```
 
 The UI is the easiest way to verify everything locally. It includes an optional AI chat panel for testing the MCP tools with an OpenAI API token, plus manual tool forms that render schemas, keep JSON arguments editable, and give device dropdowns for device-targeted tools.
+
+Browser microphone access for the listen button requires a secure origin. Use the printed `127.0.0.1` URL on the host machine, or serve the UI over HTTPS; plain `http://10.0.1.x` LAN URLs usually disable microphone input in the browser. Browsers with speech recognition use live dictation; Safari falls back to recording audio and transcribing it with the saved OpenAI token.
 
 The AI chat token is saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse it. Override that path with `MICROS_CHAT_CONFIG_PATH` if you want to keep the token somewhere else. The model dropdown loads available LLM-style OpenAI models for the saved token. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
 
@@ -91,6 +94,9 @@ Useful environment variables:
 
 ```sh
 MICROS_DEVICE_CACHE_PATH=/path/to/device_conn_cache.json npm run start
+MICROS_DEVICE_FEATURE_CACHE_PATH=/path/to/device_feature_cache.json npm run start
+MICROS_DEVICE_NOTES_CACHE_PATH=/path/to/device_notes_cache.json npm run start
+MICROS_NETWORK_PREFIX=10.0.1 npm run start
 MICROS_CHAT_CONFIG_PATH=/path/to/ui_chat_config.json npm run start -- ui
 HOST=0.0.0.0 PORT=3333 npm run start -- ui
 ```
@@ -142,7 +148,7 @@ Store persistent context about a device, such as location, attached peripherals,
 }
 ```
 
-Use `mode: "append"` to add a line without replacing existing notes, or `mode: "clear"` to remove the note. Notes are stored in `data/device_feature_cache.json`, survive feature rediscovery, and are shown by `list_devices` and `filter_devices`.
+Use `mode: "append"` to add a line without replacing existing notes, or `mode: "clear"` to remove the note. Notes are stored by device name in `data/device_notes_cache.json`, survive feature rediscovery, and are shown by `list_devices` and `filter_devices`.
 
 ### `filter_devices`
 
@@ -181,7 +187,7 @@ Check live status while filtering:
 }
 ```
 
-If `networkPrefix` is omitted, the server uses the active local IPv4 interface. In Docker Desktop, pass `networkPrefix` explicitly when automatic discovery sees the container network instead of your LAN.
+If `networkPrefix` is omitted, the server uses `MICROS_NETWORK_PREFIX` when set, otherwise the active local IPv4 interface. Startup logs whether the scan prefix was native auto-detected or injected through the environment for container mode.
 
 Discovery is a fresh network scan every time this tool runs. By default, it also refreshes the feature cache for newly discovered devices, but the tool response stays compact with module and command counts rather than full function details. Set `refreshFeatures` to `false` when you only want to update device addresses. Use `featureConcurrency` to control how many discovered devices are inspected in parallel during feature refresh.
 
@@ -330,11 +336,19 @@ At MCP startup, the server runs an initialization pass that scans for devices, t
 data/device_feature_cache.json
 ```
 
+Feature cache entries include the readable `deviceName` for quick inspection. User notes are not stored there.
+
+Persistent user notes are stored separately by device name in:
+
+```text
+data/device_notes_cache.json
+```
+
 `list_devices` stays compact: it includes device identity, persistent notes, and known module names, but not function-level feature details. Use `filter_devices` for targeted feature lookup and `discover_commands` for full module/function details. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
 
 ## Docker
 
-Build and export a standalone image:
+Build and export a standalone Docker image archive:
 
 ```sh
 npm run docker:build
@@ -343,52 +357,60 @@ npm run docker:build
 Defaults:
 
 ```text
-image: microsmcp:latest
-export: dist/microsmcp-docker-image.tar.gz
+image: micros-mcp:latest
+export: dist/micros-mcp_latest.tar.gz
 ```
+
+The exported archive is a standard `docker save` artifact. Load it with `docker load` on another machine, then run the `micros-mcp:<tag>` image.
 
 Customize:
 
 ```sh
-npm run docker:build -- --image microsmcp:dev
-npm run docker:build -- --output dist/microsmcp.tar
-npm run docker:build -- --image microsmcp:dev --output dist/microsmcp-dev-docker-image.tar.gz
-npm run docker:build -- --no-export
+npm run docker:build -- --image micros-mcp:dev
+npm run docker:build -- --output dist/micros-mcp.tar
+npm run docker:build -- --image micros-mcp:dev --output dist/micros-mcp_dev.tar.gz
 ```
 
 Install an exported image on another machine:
 
 ```sh
-docker load -i dist/microsmcp-docker-image.tar.gz
+docker load -i dist/micros-mcp_latest.tar.gz
 ```
 
-Run as stdio MCP:
+Run as stdio MCP in Docker:
 
 ```sh
-docker run --rm -i microsmcp:latest mcp
+docker run --rm -i -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest mcp
 ```
 
-Run the tester UI endpoint:
+Run the tester UI endpoint in Docker:
 
 ```sh
-docker run --rm -p 3333:3333 microsmcp:latest ui
+docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest ui
 ```
+
+Set `MICROS_NETWORK_PREFIX` to your LAN `/24` prefix, such as `10.0.1`. In native host mode this prefix is auto-detected; in Docker mode it must be injected because the container usually sees Docker's network interface instead of your LAN interface.
 
 Persist the device cache:
 
 ```sh
-docker volume create microsmcp-data
-docker run --rm -i -v microsmcp-data:/app/data microsmcp:latest mcp
-docker run --rm -p 3333:3333 -v microsmcp-data:/app/data microsmcp:latest ui
+docker volume create micros-mcp-data
+docker run --rm -i -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest mcp
+docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest ui
 ```
+
+Image contents:
+
+- Included: compiled MCP server in `dist/mcp`, compiled optional UI server in `dist/ui`, UI static assets in `ui/assets`, `scripts/start.mjs`, `package.json`, and production `node_modules`.
+- Generated at runtime: `/app/data`. The image creates this as an empty directory.
+- Excluded from the Docker build context: local `data/` contents, `dist/`, `node_modules/`, Git metadata, and local archive files. Device caches, device notes, and optional UI chat config files are sensitive runtime data and are not copied from the local checkout into the image.
 
 Docker network notes:
 
-- Direct commands to cached device IPs usually work if the container can route to your LAN.
-- Automatic `/24` discovery uses the container's network interface by default.
-- On Linux, `--network host` gives the container the host network view.
-- On Docker Desktop, pass `networkPrefix` explicitly to `discover_devices` when needed.
-- The UI binds to `0.0.0.0:3333` inside Docker, so `-p 3333:3333` exposes it on the host.
+- Native mode: the server auto-detects the active local IPv4 prefix and logs it as `native/auto-detected`.
+- Docker mode: pass `MICROS_NETWORK_PREFIX` and the server logs it as `containerized/injected`.
+- If Docker still cannot find devices, confirm the container can route TCP traffic to micrOS devices on port `9008`. Docker Desktop, host firewalls, VPNs, or Wi-Fi client isolation can block this even when the prefix is correct.
+- The UI binds to `0.0.0.0:3333` by default in native and Docker modes. In Docker, `-p 3333:3333` exposes it on the host; use the host's `http://127.0.0.1:3333` or LAN IP from outside the container.
 
 Docker MCP client config:
 
@@ -397,7 +419,17 @@ Docker MCP client config:
   "mcpServers": {
     "microsmcp": {
       "command": "docker",
-      "args": ["run", "--rm", "-i", "microsmcp:latest", "mcp"]
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "MICROS_NETWORK_PREFIX=10.0.1",
+        "-v",
+        "micros-mcp-data:/app/data",
+        "micros-mcp:latest",
+        "mcp"
+      ]
     }
   }
 }

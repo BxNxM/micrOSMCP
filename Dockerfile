@@ -6,7 +6,6 @@ COPY package.json tsconfig.json ./
 COPY mcp ./mcp
 COPY ui ./ui
 COPY scripts ./scripts
-COPY data ./data
 
 RUN npm install
 RUN npm run build
@@ -24,7 +23,8 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/ui ./ui
 COPY --from=build /app/scripts ./scripts
-COPY --from=build /app/data ./data
+
+RUN mkdir -p data
 
 EXPOSE 3333
 

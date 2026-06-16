@@ -22,6 +22,16 @@ export async function initializeMicrOSState(input: InitializeMicrOSStateInput = 
     timeoutMs: discoverTimeoutMs,
     refreshFeatures: false
   });
+  const networkMode =
+    deviceDiscovery.networkPrefixSource === "injected"
+      ? "containerized/injected"
+      : deviceDiscovery.networkPrefixSource === "input"
+        ? "tool-input"
+        : "native/auto-detected";
+  initializationLog(
+    input,
+    `network scan prefix ${deviceDiscovery.networkPrefix ?? "unavailable"} (${networkMode})`
+  );
   initializationLog(
     input,
     `device discovery complete: ${deviceDiscovery.openHosts.length} open host(s), ${deviceDiscovery.discovered.length} micrOS device(s)`
@@ -45,6 +55,8 @@ export async function initializeMicrOSState(input: InitializeMicrOSStateInput = 
     devices: {
       openHosts: deviceDiscovery.openHosts.length,
       discovered: deviceDiscovery.discovered.length,
+      networkPrefix: deviceDiscovery.networkPrefix,
+      networkPrefixSource: deviceDiscovery.networkPrefixSource,
       cachePath: deviceDiscovery.cachePath
     },
     features: {

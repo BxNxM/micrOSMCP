@@ -5,8 +5,13 @@ import { spawnSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 
-const defaultImage = "microsmcp:latest";
-const defaultOutput = "dist/microsmcp-docker-image.tar.gz";
+const defaultImage = "micros-mcp:latest";
+
+function defaultOutputForImage(image) {
+  const imageName = image.split("/").pop() ?? image;
+  const safeName = imageName.replace(/[^a-zA-Z0-9_.-]+/g, "_");
+  return `dist/${safeName}.tar.gz`;
+}
 
 function printHelp() {
   console.log(`Usage:
@@ -14,23 +19,21 @@ function printHelp() {
 
 Options:
   --image <name:tag>   Docker image tag to build. Default: ${defaultImage}
-  --output <path>      Export image path. Use .tar or .tar.gz. Default: ${defaultOutput}
-  --no-export          Build the image without docker save.
+  --output <path>      Export image path. Use .tar or .tar.gz.
+                       Default: dist/<image>_<tag>.tar.gz
   -h, --help           Show this help.
 
 Examples:
   npm run docker:build
-  npm run docker:build -- --image microsmcp:dev
-  npm run docker:build -- --output dist/microsmcp.tar
-  npm run docker:build -- --no-export
+  npm run docker:build -- --image micros-mcp:dev
+  npm run docker:build -- --output dist/micros-mcp.tar
 `);
 }
 
 function readOptions(argv) {
   const options = {
     image: defaultImage,
-    output: defaultOutput,
-    exportImage: true
+    output: undefined
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -38,11 +41,6 @@ function readOptions(argv) {
 
     if (arg === "-h" || arg === "--help") {
       return { help: true, options };
-    }
-
-    if (arg === "--no-export") {
-      options.exportImage = false;
-      continue;
     }
 
     if (arg === "--image" || arg === "--output") {
@@ -113,10 +111,8 @@ try {
 
   run("docker", ["build", "-t", options.image, "."]);
 
-  if (options.exportImage) {
-    const outputPath = await saveImage(options.image, options.output);
-    console.log(`Exported ${options.image} to ${outputPath}`);
-  }
+  const outputPath = await saveImage(options.image, options.output ?? defaultOutputForImage(options.image));
+  console.log(`Exported ${options.image} to ${outputPath}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

@@ -2,6 +2,7 @@ import {
   cacheToDevices,
   deviceCachePath,
   deviceFeatureCachePath,
+  deviceNotesCachePath,
   readDeviceCache,
   readDeviceFeatureCache
 } from "./common.js";
@@ -28,7 +29,8 @@ export async function listDevices(_input: ListDevicesInput = {}) {
     count: devices.length,
     devices,
     cachePath: deviceCachePath,
-    featureCachePath: deviceFeatureCachePath
+    featureCachePath: deviceFeatureCachePath,
+    notesCachePath: deviceNotesCachePath
   };
 }
 

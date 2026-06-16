@@ -2,11 +2,13 @@ import { z } from "zod";
 import {
   cacheToDevices,
   deviceFeatureCachePath,
-  emptyCachedDeviceFeatures,
+  deviceNotesCachePath,
+  deviceNoteKey,
   findDevices,
   readDeviceCache,
   readDeviceFeatureCache,
-  saveDeviceFeatureCache
+  readDeviceNotesCache,
+  saveDeviceNotesCache
 } from "./common.js";
 import { defineTool } from "./definition.js";
 
@@ -50,9 +52,10 @@ export async function setDeviceNote(input: SetDeviceNoteInput) {
   }
 
   const device = matches[0];
+  const noteKey = deviceNoteKey(device);
+  const notesCache = await readDeviceNotesCache();
   const featureCache = await readDeviceFeatureCache();
-  const previous = featureCache[device.uid] ?? emptyCachedDeviceFeatures();
-  const previousNote = previous.deviceNote;
+  const previousNote = notesCache[noteKey] ?? notesCache[device.uid] ?? featureCache[device.uid]?.deviceNote ?? "";
   const deviceNote =
     mode === "clear"
       ? ""
@@ -60,11 +63,9 @@ export async function setDeviceNote(input: SetDeviceNoteInput) {
         ? `${previousNote}\n${nextNote}`
         : nextNote;
 
-  featureCache[device.uid] = {
-    ...previous,
-    deviceNote
-  };
-  await saveDeviceFeatureCache(featureCache);
+  notesCache[noteKey] = deviceNote;
+  delete notesCache[device.uid];
+  await saveDeviceNotesCache(notesCache);
 
   return {
     ok: true,
@@ -72,7 +73,8 @@ export async function setDeviceNote(input: SetDeviceNoteInput) {
     mode,
     previousNote,
     deviceNote,
-    featureCachePath: deviceFeatureCachePath
+    featureCachePath: deviceFeatureCachePath,
+    notesCachePath: deviceNotesCachePath
   };
 }
 
@@ -80,7 +82,7 @@ export const setDeviceNoteTool = defineTool<SetDeviceNoteInput>({
   name: "set_device_note",
   title: "Set Device Note",
   description:
-    "Add, replace, append, or clear a persistent note for one cached micrOS device. Notes are stored beside discovered features and survive rediscovery.",
+    "Add, replace, append, or clear a persistent note for one cached micrOS device. Notes are stored separately from discovered features and survive rediscovery.",
   inputSchema: {
     deviceTag: z.string().min(1).describe("Device UID, FUID, IP address, or unambiguous partial name."),
     note: z

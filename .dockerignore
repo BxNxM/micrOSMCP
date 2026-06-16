@@ -3,6 +3,8 @@
 .agents
 dist
 node_modules
+data/
+data/**
 npm-debug.log
 Dockerfile
 *.tar

@@ -292,9 +292,110 @@ function createChatElement() {
       </button>
       <textarea data-chat-input rows="2" placeholder="Ask about devices or request a tool call."></textarea>
       <button data-chat-send type="submit">Send</button>
+      <span data-chat-listen-status class="chat-listen-status" role="status"></span>
     </form>
   `;
   return section;
+}
+
+export function speechRecognitionSupport({
+  SpeechRecognition,
+  webkitSpeechRecognition,
+  isSecureContext,
+  protocol,
+  hostname,
+  port
+} = {}) {
+  const recognitionConstructor = SpeechRecognition || webkitSpeechRecognition || null;
+
+  if (!recognitionConstructor) {
+    return {
+      ok: false,
+      reason: "Speech recognition is not available in this browser.",
+      Recognition: null
+    };
+  }
+
+  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const secure = Boolean(isSecureContext) || protocol === "https:" || isLocalhost;
+
+  if (!secure) {
+    const localUrl = `http://127.0.0.1${port ? `:${port}` : ""}`;
+
+    return {
+      ok: false,
+      reason: `Microphone requires HTTPS or localhost. Open the UI from ${localUrl} on this machine.`,
+      Recognition: null
+    };
+  }
+
+  return {
+    ok: true,
+    reason: "",
+    Recognition: recognitionConstructor
+  };
+}
+
+export function audioRecordingSupport({
+  mediaDevices,
+  MediaRecorder,
+  isSecureContext,
+  protocol,
+  hostname,
+  port
+} = {}) {
+  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  const secure = Boolean(isSecureContext) || protocol === "https:" || isLocalhost;
+
+  if (!secure) {
+    const localUrl = `http://127.0.0.1${port ? `:${port}` : ""}`;
+
+    return {
+      ok: false,
+      reason: `Microphone requires HTTPS or localhost. Open the UI from ${localUrl} on this machine.`
+    };
+  }
+
+  if (!mediaDevices?.getUserMedia || !MediaRecorder) {
+    return {
+      ok: false,
+      reason: "Audio recording is not available in this browser."
+    };
+  }
+
+  return {
+    ok: true,
+    reason: ""
+  };
+}
+
+function preferredAudioMimeType(MediaRecorder) {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  return candidates.find((type) => MediaRecorder?.isTypeSupported?.(type)) ?? "";
+}
+
+function audioFilename(mimeType) {
+  if (mimeType.includes("mp4")) {
+    return "microsmcp-recording.mp4";
+  }
+
+  if (mimeType.includes("ogg")) {
+    return "microsmcp-recording.ogg";
+  }
+
+  return "microsmcp-recording.webm";
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(result.split(",")[1] ?? "");
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Could not read recorded audio.")));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function initChat({ mount, onToolEvent } = {}) {
@@ -312,11 +413,16 @@ export function initChat({ mount, onToolEvent } = {}) {
   const chatForm = root.querySelector("[data-chat-form]");
   const chatInput = root.querySelector("[data-chat-input]");
   const listenButton = root.querySelector("[data-chat-listen]");
+  const listenStatus = root.querySelector("[data-chat-listen-status]");
   const sendChat = root.querySelector("[data-chat-send]");
 
   let chatMessages = [];
   let recognition = null;
   let isListening = false;
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let audioChunks = [];
+  let voiceMode = "none";
   let saveTimer = null;
   let chatVersion = 0;
 
@@ -395,12 +501,17 @@ export function initChat({ mount, onToolEvent } = {}) {
     chatInput.value = "";
     stopSpeaking();
 
-    if (isListening && recognition) {
-      recognition.stop();
+    if (isListening) {
+      if (recognition) {
+        recognition.stop();
+      } else if (mediaRecorder?.state === "recording") {
+        mediaRecorder.stop();
+      }
     }
 
     sendChat.disabled = false;
-    listenButton.disabled = !recognition;
+    listenButton.disabled = voiceMode === "none";
+    listenStatus.textContent = listenButton.disabled ? listenStatus.textContent : "";
     appendChatMessage("assistant", "Ready.");
     chatInput.focus();
   }
@@ -584,21 +695,82 @@ export function initChat({ mount, onToolEvent } = {}) {
       setChatMessageText(pending, error instanceof Error ? error.message : "Chat request failed.");
     } finally {
       sendChat.disabled = false;
-      listenButton.disabled = !recognition;
+      listenButton.disabled = voiceMode === "none";
       chatInput.focus();
     }
   }
 
-  function setupSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  async function transcribeBlob(blob) {
+    const base64 = await blobToBase64(blob);
+    const response = await fetch("/api/transcribe", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        apiKey: apiTokenInput.value,
+        audio: {
+          base64,
+          type: blob.type || "audio/webm",
+          filename: audioFilename(blob.type || "audio/webm")
+        }
+      })
+    });
+    const payload = await response.json();
 
-    if (!SpeechRecognition) {
-      listenButton.disabled = true;
-      listenButton.title = "Speech recognition is not available in this browser";
+    if (!response.ok) {
+      throw new Error(payload.error || "Transcription failed.");
+    }
+
+    return payload.text ?? "";
+  }
+
+  function resetListenButton() {
+    isListening = false;
+    listenButton.classList.remove("listening");
+    listenButton.setAttribute("aria-pressed", "false");
+    listenButton.title = voiceMode === "recording" ? "Record" : "Listen";
+    listenButton.setAttribute("aria-label", voiceMode === "recording" ? "Record" : "Listen");
+  }
+
+  function setupSpeechRecognition() {
+    const support = speechRecognitionSupport({
+      SpeechRecognition: window.SpeechRecognition,
+      webkitSpeechRecognition: window.webkitSpeechRecognition,
+      isSecureContext: window.isSecureContext,
+      protocol: window.location.protocol,
+      hostname: window.location.hostname,
+      port: window.location.port
+    });
+
+    if (support.ok) {
+      voiceMode = "speech";
+      recognition = new support.Recognition();
+    } else {
+      const recordingSupport = audioRecordingSupport({
+        mediaDevices: navigator.mediaDevices,
+        MediaRecorder: window.MediaRecorder,
+        isSecureContext: window.isSecureContext,
+        protocol: window.location.protocol,
+        hostname: window.location.hostname,
+        port: window.location.port
+      });
+
+      if (!recordingSupport.ok) {
+        listenButton.disabled = true;
+        listenButton.title = support.reason.includes("secure") ? support.reason : recordingSupport.reason;
+        listenStatus.textContent = listenButton.title;
+        return;
+      }
+
+      voiceMode = "recording";
+      listenButton.disabled = false;
+      listenButton.title = "Record";
+      listenButton.setAttribute("aria-label", "Record");
+      listenStatus.textContent = "Safari fallback: record audio, then transcribe it with OpenAI.";
       return;
     }
 
-    recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = true;
 
@@ -609,13 +781,21 @@ export function initChat({ mount, onToolEvent } = {}) {
       listenButton.setAttribute("aria-pressed", "true");
       listenButton.title = "Stop listening";
       listenButton.setAttribute("aria-label", "Stop listening");
+      listenStatus.textContent = "";
     });
     recognition.addEventListener("end", () => {
-      isListening = false;
-      listenButton.classList.remove("listening");
-      listenButton.setAttribute("aria-pressed", "false");
-      listenButton.title = "Listen";
-      listenButton.setAttribute("aria-label", "Listen");
+      resetListenButton();
+    });
+    recognition.addEventListener("error", (event) => {
+      const message =
+        event.error === "not-allowed"
+          ? "Microphone permission was denied by the browser."
+          : event.error
+            ? `Speech recognition stopped: ${event.error}.`
+            : "Speech recognition stopped.";
+
+      listenStatus.textContent = message;
+      listenButton.title = message;
     });
     recognition.addEventListener("result", (event) => {
       const transcript = Array.from(event.results)
@@ -629,7 +809,80 @@ export function initChat({ mount, onToolEvent } = {}) {
     });
   }
 
+  async function startRecording() {
+    if (!apiTokenInput.value.trim()) {
+      listenStatus.textContent = "OpenAI API token is required for Safari microphone transcription.";
+      apiTokenInput.focus();
+      return;
+    }
+
+    try {
+      stopSpeaking();
+      listenStatus.textContent = "";
+      audioChunks = [];
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = preferredAudioMimeType(window.MediaRecorder);
+      mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+      mediaRecorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size > 0) {
+          audioChunks.push(event.data);
+        }
+      });
+      mediaRecorder.addEventListener("stop", () => {
+        const tracks = mediaStream?.getTracks?.() ?? [];
+        tracks.forEach((track) => track.stop());
+        mediaStream = null;
+        const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || mimeType || "audio/webm" });
+        audioChunks = [];
+
+        if (blob.size === 0) {
+          listenStatus.textContent = "No audio was recorded.";
+          return;
+        }
+
+        listenButton.disabled = true;
+        listenStatus.textContent = "Transcribing...";
+        void transcribeBlob(blob)
+          .then((text) => {
+            if (text.trim()) {
+              chatInput.value = text.trim();
+              listenStatus.textContent = "";
+              chatInput.focus();
+            } else {
+              listenStatus.textContent = "No speech was detected.";
+            }
+          })
+          .catch((error) => {
+            listenStatus.textContent = error instanceof Error ? error.message : "Transcription failed.";
+          })
+          .finally(() => {
+            listenButton.disabled = false;
+          });
+      });
+      mediaRecorder.start();
+      isListening = true;
+      listenButton.classList.add("listening");
+      listenButton.setAttribute("aria-pressed", "true");
+      listenButton.title = "Stop recording";
+      listenButton.setAttribute("aria-label", "Stop recording");
+    } catch (error) {
+      resetListenButton();
+      listenStatus.textContent = error instanceof Error ? error.message : "Could not start microphone.";
+    }
+  }
+
   function toggleListening() {
+    if (voiceMode === "recording") {
+      if (mediaRecorder?.state === "recording") {
+        mediaRecorder.stop();
+        resetListenButton();
+        return;
+      }
+
+      void startRecording();
+      return;
+    }
+
     if (!recognition) {
       return;
     }
@@ -641,10 +894,12 @@ export function initChat({ mount, onToolEvent } = {}) {
 
     try {
       stopSpeaking();
+      listenStatus.textContent = "";
       recognition.start();
     } catch (error) {
       isListening = false;
       listenButton.classList.remove("listening");
+      listenStatus.textContent = error instanceof Error ? error.message : "Could not start microphone.";
     }
   }
 

@@ -39,6 +39,7 @@ export type DiscoveredCommand = {
 };
 
 export type CachedDeviceFeatures = {
+  deviceName: string;
   deviceNote: string;
   discoveredAt: string | null;
   modulesCommand: string;
@@ -48,6 +49,7 @@ export type CachedDeviceFeatures = {
 };
 
 export type DeviceFeatureCache = Record<string, CachedDeviceFeatures>;
+export type DeviceNotesCache = Record<string, string>;
 
 export type DiscoverDevicesOptions = {
   port?: number;
@@ -58,12 +60,22 @@ export type DiscoverDevicesOptions = {
   timeoutMs?: number;
 };
 
+export type NetworkPrefixSource = "input" | "injected" | "auto";
+
+export type NetworkPrefixResolution = {
+  networkPrefix: string | null;
+  source: NetworkPrefixSource;
+};
+
 export const deviceCachePath =
   process.env.MICROS_DEVICE_CACHE_PATH ??
   resolve(process.cwd(), "data/device_conn_cache.json");
 export const deviceFeatureCachePath =
   process.env.MICROS_DEVICE_FEATURE_CACHE_PATH ??
   resolve(process.cwd(), "data/device_feature_cache.json");
+export const deviceNotesCachePath =
+  process.env.MICROS_DEVICE_NOTES_CACHE_PATH ??
+  resolve(process.cwd(), "data/device_notes_cache.json");
 export const defaultPort = 9008;
 
 const defaultCache: DeviceCache = {
@@ -106,8 +118,9 @@ function stringArray(input: unknown) {
   return Array.isArray(input) ? input.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-export function emptyCachedDeviceFeatures(deviceNote = ""): CachedDeviceFeatures {
+export function emptyCachedDeviceFeatures(deviceNote = "", deviceName = ""): CachedDeviceFeatures {
   return {
+    deviceName,
     deviceNote,
     discoveredAt: null,
     modulesCommand: "modules",
@@ -130,6 +143,7 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
     }
 
     const entry = value as Record<string, unknown>;
+    const deviceName = typeof entry.deviceName === "string" ? entry.deviceName : "";
     const deviceNote = typeof entry.deviceNote === "string" ? entry.deviceNote : "";
     const discoveredAt = typeof entry.discoveredAt === "string" ? entry.discoveredAt : null;
     const modulesCommand = typeof entry.modulesCommand === "string" ? entry.modulesCommand : "modules";
@@ -212,6 +226,7 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
       : [];
 
     normalized[uid] = {
+      deviceName,
       deviceNote,
       discoveredAt,
       modulesCommand,
@@ -224,6 +239,31 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
   return normalized;
 }
 
+function normalizeDeviceNotesCache(input: unknown): DeviceNotesCache {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+
+  const normalized: DeviceNotesCache = {};
+
+  for (const [uid, note] of Object.entries(input)) {
+    if (typeof uid === "string" && typeof note === "string") {
+      normalized[uid] = note;
+    }
+  }
+
+  return normalized;
+}
+
+function stripDeviceNotesFromFeatureCache(cache: DeviceFeatureCache) {
+  return Object.fromEntries(
+    Object.entries(cache).map(([uid, features]) => {
+      const { deviceNote: _deviceNote, ...featureData } = features;
+      return [uid, featureData];
+    })
+  );
+}
+
 export function cacheToDevices(cache: DeviceCache): Device[] {
   return Object.entries(cache).map(([uid, [ip, port, fuid]]) => ({
     uid,
@@ -231,6 +271,69 @@ export function cacheToDevices(cache: DeviceCache): Device[] {
     port,
     fuid
   }));
+}
+
+export function deviceNoteKey(device: Pick<Device, "uid" | "fuid">) {
+  return device.fuid || device.uid;
+}
+
+function deviceNoteKeyForUid(uid: string, cache: DeviceCache) {
+  const fuid = cache[uid]?.[2];
+  return fuid || uid;
+}
+
+function notesByUid(notesCache: DeviceNotesCache, deviceCache: DeviceCache) {
+  const notes: DeviceNotesCache = {};
+  const knownNoteKeys = new Set<string>();
+
+  for (const [uid, [_ip, _port, fuid]] of Object.entries(deviceCache)) {
+    knownNoteKeys.add(uid);
+    knownNoteKeys.add(fuid);
+
+    const note = notesCache[fuid] ?? notesCache[uid];
+
+    if (note !== undefined) {
+      notes[uid] = note;
+    }
+  }
+
+  for (const [key, note] of Object.entries(notesCache)) {
+    if (knownNoteKeys.has(key) || notes[key] !== undefined) {
+      continue;
+    }
+
+    notes[key] = note;
+  }
+
+  return notes;
+}
+
+function featuresWithDeviceContext(
+  featureCache: DeviceFeatureCache,
+  notesCache: DeviceNotesCache,
+  deviceCache: DeviceCache
+) {
+  const deviceNotesByUid = notesByUid(notesCache, deviceCache);
+  const withContext: DeviceFeatureCache = {};
+
+  for (const [uid, features] of Object.entries(featureCache)) {
+    withContext[uid] = {
+      ...features,
+      deviceName: deviceNoteKeyForUid(uid, deviceCache),
+      deviceNote: deviceNotesByUid[uid] ?? features.deviceNote
+    };
+  }
+
+  for (const [uid, note] of Object.entries(deviceNotesByUid)) {
+    withContext[uid] = withContext[uid] ?? emptyCachedDeviceFeatures("", deviceNoteKeyForUid(uid, deviceCache));
+    withContext[uid] = {
+      ...withContext[uid],
+      deviceName: deviceNoteKeyForUid(uid, deviceCache),
+      deviceNote: note
+    };
+  }
+
+  return withContext;
 }
 
 export function attachDeviceFeatures(devices: Device[], featureCache: DeviceFeatureCache) {
@@ -279,6 +382,7 @@ export function deviceFeatureSearchFields(features?: CachedDeviceFeatures) {
 
   return [
     features.deviceNote,
+    features.deviceName,
     ...(features.discoveredAt ? [features.discoveredAt] : []),
     features.modulesCommand,
     ...features.rawModules,
@@ -368,17 +472,54 @@ export async function saveDeviceCache(cache: DeviceCache) {
 }
 
 export async function readDeviceFeatureCache(): Promise<DeviceFeatureCache> {
+  const notesCache = await readDeviceNotesCache();
+  const deviceCache = (await readRawDeviceCache()) ?? defaultCache;
+
   try {
     const raw = await readFile(deviceFeatureCachePath, "utf8");
-    return normalizeDeviceFeatureCache(JSON.parse(raw));
+    return featuresWithDeviceContext(normalizeDeviceFeatureCache(JSON.parse(raw)), notesCache, deviceCache);
+  } catch {
+    return featuresWithDeviceContext({}, notesCache, deviceCache);
+  }
+}
+
+export async function saveDeviceFeatureCache(cache: DeviceFeatureCache) {
+  const notesCache = await readDeviceNotesCache();
+  const deviceCache = await readDeviceCacheWithoutAutoDiscover();
+
+  for (const [uid, features] of Object.entries(cache)) {
+    cache[uid] = {
+      ...features,
+      deviceName: deviceNoteKeyForUid(uid, deviceCache)
+    };
+
+    if (features.deviceNote.trim().length > 0) {
+      const noteKey = deviceNoteKeyForUid(uid, deviceCache);
+      notesCache[noteKey] = features.deviceNote;
+      delete notesCache[uid];
+    }
+  }
+
+  await saveDeviceNotesCache(notesCache);
+  await mkdir(dirname(deviceFeatureCachePath), { recursive: true });
+  await writeFile(deviceFeatureCachePath, `${JSON.stringify(stripDeviceNotesFromFeatureCache(cache), null, 4)}\n`);
+}
+
+export async function readDeviceNotesCache(): Promise<DeviceNotesCache> {
+  try {
+    const raw = await readFile(deviceNotesCachePath, "utf8");
+    return normalizeDeviceNotesCache(JSON.parse(raw));
   } catch {
     return {};
   }
 }
 
-export async function saveDeviceFeatureCache(cache: DeviceFeatureCache) {
-  await mkdir(dirname(deviceFeatureCachePath), { recursive: true });
-  await writeFile(deviceFeatureCachePath, `${JSON.stringify(cache, null, 4)}\n`);
+export async function saveDeviceNotesCache(cache: DeviceNotesCache) {
+  const withoutEmptyNotes = Object.fromEntries(
+    Object.entries(cache).filter(([_uid, note]) => note.trim().length > 0)
+  );
+  await mkdir(dirname(deviceNotesCachePath), { recursive: true });
+  await writeFile(deviceNotesCachePath, `${JSON.stringify(withoutEmptyNotes, null, 4)}\n`);
 }
 
 export async function readDeviceCache(): Promise<DeviceCache> {
@@ -717,7 +858,7 @@ export async function nodeIsOnline(ip: string, port = defaultPort, timeoutMs = 1
   }
 }
 
-export function getLocalNetworkPrefix() {
+function autoDetectNetworkPrefix() {
   for (const addresses of Object.values(networkInterfaces())) {
     for (const address of addresses ?? []) {
       if (address.family === "IPv4" && !address.internal) {
@@ -727,6 +868,31 @@ export function getLocalNetworkPrefix() {
   }
 
   return null;
+}
+
+export function resolveNetworkPrefix(inputNetworkPrefix?: string): NetworkPrefixResolution {
+  if (inputNetworkPrefix) {
+    return {
+      networkPrefix: inputNetworkPrefix,
+      source: "input"
+    };
+  }
+
+  if (process.env.MICROS_NETWORK_PREFIX) {
+    return {
+      networkPrefix: process.env.MICROS_NETWORK_PREFIX,
+      source: "injected"
+    };
+  }
+
+  return {
+    networkPrefix: autoDetectNetworkPrefix(),
+    source: "auto"
+  };
+}
+
+export function getLocalNetworkPrefix() {
+  return resolveNetworkPrefix().networkPrefix;
 }
 
 async function scanOpenPort({
@@ -799,9 +965,10 @@ async function handshakeDevice(ip: string, port = defaultPort, timeoutSeconds = 
 export async function discoverAndSaveDevices(input: DiscoverDevicesOptions = {}) {
   const port = input.port ?? defaultPort;
   const timeoutMs = input.timeoutMs ?? 1000;
+  const prefixResolution = resolveNetworkPrefix(input.networkPrefix);
   const openHosts = await scanOpenPort({
     port,
-    networkPrefix: input.networkPrefix ?? getLocalNetworkPrefix(),
+    networkPrefix: prefixResolution.networkPrefix,
     startHost: input.startHost ?? 2,
     endHost: input.endHost ?? 254,
     concurrency: input.concurrency ?? 50,
@@ -821,7 +988,8 @@ export async function discoverAndSaveDevices(input: DiscoverDevicesOptions = {})
 
   return {
     port,
-    networkPrefix: input.networkPrefix ?? getLocalNetworkPrefix(),
+    networkPrefix: prefixResolution.networkPrefix,
+    networkPrefixSource: prefixResolution.source,
     openHosts,
     discovered,
     updatedCache: nextCache,

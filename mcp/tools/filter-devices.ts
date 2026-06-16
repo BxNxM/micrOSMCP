@@ -5,6 +5,7 @@ import {
   deviceIdentityFields,
   deviceSearchFields,
   deviceFeatureCachePath,
+  deviceNotesCachePath,
   fieldsMatchQuery,
   type DeviceStatus,
   nodeIsOnline,
@@ -20,16 +21,20 @@ export type FilterDevicesInput = {
 };
 
 type FilterDevice = Omit<Device, "features"> & {
-  features?: Omit<CachedDeviceFeatures, "deviceNote">;
+  features?: Omit<CachedDeviceFeatures, "deviceName" | "deviceNote">;
 };
 
-function stripNestedDeviceNote(features?: CachedDeviceFeatures) {
+function stripNestedDeviceContext(features?: CachedDeviceFeatures) {
   if (!features) {
     return undefined;
   }
 
-  const { deviceNote: _deviceNote, ...rest } = features;
+  const { deviceName: _deviceName, deviceNote: _deviceNote, ...rest } = features;
   return rest;
+}
+
+function exactModuleNameMatches(features: CachedDeviceFeatures | undefined, query: string) {
+  return Boolean(features?.modules.some((module) => module.name.toLowerCase() === query));
 }
 
 export async function filterDevices(input: FilterDevicesInput) {
@@ -46,15 +51,16 @@ export async function filterDevices(input: FilterDevicesInput) {
     const { features, ...deviceFields } = device;
     const outputDevice: FilterDevice = { ...deviceFields };
     const noteMatches = fieldsMatchQuery([outputDevice.deviceNote ?? ""], query);
+    const exactModuleMatch = exactModuleNameMatches(features, query);
     const outputFeatures =
-      features && !fieldsMatchQuery(deviceIdentityFields(device), query) && !noteMatches
+      features && (exactModuleMatch || (!fieldsMatchQuery(deviceIdentityFields(device), query) && !noteMatches))
         ? pruneDeviceFeaturesForQuery(features, query)
         : features;
 
-    const featuresWithoutNote = stripNestedDeviceNote(outputFeatures);
+    const featuresWithoutContext = stripNestedDeviceContext(outputFeatures);
 
-    if (featuresWithoutNote) {
-      outputDevice.features = featuresWithoutNote;
+    if (featuresWithoutContext) {
+      outputDevice.features = featuresWithoutContext;
     }
 
     if (includeStatus) {
@@ -73,7 +79,8 @@ export async function filterDevices(input: FilterDevicesInput) {
     status: input.status ?? null,
     count: matches.length,
     devices: matches,
-    featureCachePath: deviceFeatureCachePath
+    featureCachePath: deviceFeatureCachePath,
+    notesCachePath: deviceNotesCachePath
   };
 }
 
