@@ -2,14 +2,20 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { initializeMicrOSStateSafely } from "./initialize.js";
-import { registerMicrOSTools } from "./mcp-tools.js";
+import { loadMcpInstructions } from "./metadata.js";
+import { registerMcpTools } from "./mcp-tools.js";
 
-const server = new McpServer({
-  name: "microsmcp",
-  version: "0.1.0"
-});
+const server = new McpServer(
+  {
+    name: "microsmcp",
+    version: "1.0.0"
+  },
+  {
+    instructions: await loadMcpInstructions()
+  }
+);
 
-registerMicrOSTools(server);
+await registerMcpTools(server);
 
 const initialization = await initializeMicrOSStateSafely({
   log: (message) => console.error(message)

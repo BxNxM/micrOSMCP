@@ -6,7 +6,7 @@ import {
   readDeviceCache,
   readDeviceFeatureCache
 } from "./common.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type ListDevicesInput = {};
 
@@ -34,10 +34,7 @@ export async function listDevices(_input: ListDevicesInput = {}) {
   };
 }
 
-export const listDevicesTool = defineTool<ListDevicesInput>({
-  name: "list_devices",
-  title: "List Devices",
-  description: "Return a compact cached device inventory with identity, persistent note, and known module names only.",
+export const listDevicesTool = defineTool<ListDevicesInput>(import.meta.url, {
   inputSchema: {},
   handler: () => listDevices()
 });

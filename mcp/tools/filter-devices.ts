@@ -12,7 +12,7 @@ import {
   pruneDeviceFeaturesForQuery,
   readCachedDevicesWithFeatures
 } from "./common.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type FilterDevicesInput = {
   query: string;
@@ -84,11 +84,7 @@ export async function filterDevices(input: FilterDevicesInput) {
   };
 }
 
-export const filterDevicesTool = defineTool<FilterDevicesInput>({
-  name: "filter_devices",
-  title: "Filter Devices",
-  description:
-    "Primary device selection tool: filter cached micrOS devices by name, UID, IP, port, note, module, function, command, or cached feature text. Feature-query results include only relevant feature modules to keep context compact.",
+export const filterDevicesTool = defineTool<FilterDevicesInput>(import.meta.url, {
   inputSchema: {
     query: z
       .string()

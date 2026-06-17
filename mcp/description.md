@@ -1,0 +1,1 @@
+micrOSMCP provides tools for discovering micrOS devices, selecting cached devices, inspecting discovered module/function capabilities, saving persistent device notes, and running micrOS command pipelines. Use filter_devices before run_command when choosing a target device because command execution can change device state.

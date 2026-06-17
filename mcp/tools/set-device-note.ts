@@ -10,7 +10,7 @@ import {
   readDeviceNotesCache,
   saveDeviceNotesCache
 } from "./common.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type SetDeviceNoteInput = {
   deviceTag: string;
@@ -78,11 +78,7 @@ export async function setDeviceNote(input: SetDeviceNoteInput) {
   };
 }
 
-export const setDeviceNoteTool = defineTool<SetDeviceNoteInput>({
-  name: "set_device_note",
-  title: "Set Device Note",
-  description:
-    "Add, replace, append, or clear a persistent note for one cached micrOS device. Notes are stored separately from discovered features and survive rediscovery.",
+export const setDeviceNoteTool = defineTool<SetDeviceNoteInput>(import.meta.url, {
   inputSchema: {
     deviceTag: z.string().min(1).describe("Device UID, FUID, IP address, or unambiguous partial name."),
     note: z

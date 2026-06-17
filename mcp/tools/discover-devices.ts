@@ -2,7 +2,7 @@ import { z } from "zod";
 import { discoverAndSaveDevices, type DiscoverDevicesOptions } from "./common.js";
 import type { DeviceCommandDiscoveryResult } from "./discover-commands.js";
 import { discoverCommandsForDevices } from "./discover-commands.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type DiscoverDevicesInput = DiscoverDevicesOptions & {
   refreshFeatures?: boolean;
@@ -62,11 +62,7 @@ function compactFeatureDiscoveryResult(result: DeviceCommandDiscoveryResult) {
   };
 }
 
-export const discoverDevicesTool = defineTool<DiscoverDevicesInput>({
-  name: "discover_devices",
-  title: "Discover Devices",
-  description:
-    "Run a fresh network discovery for micrOS devices, update the device cache, then refresh cached module/function features for discovered devices. Returns a compact refresh summary.",
+export const discoverDevicesTool = defineTool<DiscoverDevicesInput>(import.meta.url, {
   inputSchema: {
     port: z.number().int().positive().optional().describe("micrOS service port. Defaults to 9008."),
     networkPrefix: z

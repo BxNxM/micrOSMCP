@@ -8,7 +8,7 @@ export type {
   DiscoveredModuleFunction,
   DiscoverDevicesOptions
 } from "./tools/common.js";
-export type { MicrOSToolDefinition } from "./tools/definition.js";
+export type { McpToolDefinition } from "./tool-definition.js";
 export type { DiscoverCommandsInput } from "./tools/discover-commands.js";
 export type { DiscoverDevicesInput } from "./tools/discover-devices.js";
 export type { FilterDevicesInput } from "./tools/filter-devices.js";
@@ -21,4 +21,4 @@ export { filterDevices, filterDevicesTool } from "./tools/filter-devices.js";
 export { listDevices, listDevicesTool } from "./tools/list-devices.js";
 export { runCommand, runCommandTool } from "./tools/run-command.js";
 export { setDeviceNote, setDeviceNoteTool } from "./tools/set-device-note.js";
-export { toolDefinitions } from "./tools/registry.js";
+export { toolDefinitions } from "./tool-registry.js";

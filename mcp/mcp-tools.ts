@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { toolDefinitions, type MicrOSToolDefinition } from "./tools.js";
+import type { McpToolDefinition } from "./tool-definition.js";
+import { loadToolDefinitions } from "./tool-loader.js";
 
 function textResult(value: unknown, isError = false) {
   return {
@@ -17,7 +18,7 @@ function isToolError(result: unknown) {
   return typeof result === "object" && result !== null && "ok" in result && result.ok === false;
 }
 
-function registerMicrOSTool(server: McpServer, tool: MicrOSToolDefinition) {
+function registerMcpTool(server: McpServer, tool: McpToolDefinition) {
   server.registerTool(
     tool.name,
     {
@@ -32,8 +33,8 @@ function registerMicrOSTool(server: McpServer, tool: MicrOSToolDefinition) {
   );
 }
 
-export function registerMicrOSTools(server: McpServer) {
-  for (const tool of toolDefinitions) {
-    registerMicrOSTool(server, tool);
+export async function registerMcpTools(server: McpServer) {
+  for (const tool of await loadToolDefinitions()) {
+    registerMcpTool(server, tool);
   }
 }

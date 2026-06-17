@@ -2,6 +2,30 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+export async function loadChatSystemPrompt(promptUrl?: URL) {
+  if (promptUrl) {
+    return (await readFile(promptUrl, "utf8")).trim();
+  }
+
+  const candidates = [
+    new URL("./chat-system-prompt.md", import.meta.url),
+    new URL("../../ui/chat-system-prompt.md", import.meta.url)
+  ];
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    try {
+      return (await readFile(candidate, "utf8")).trim();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
+const chatSystemPrompt = await loadChatSystemPrompt();
+
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -21,6 +45,7 @@ type TranscribeRequestBody = {
 export type ChatConfig = {
   apiKey: string;
   model: string;
+  speakReplies: boolean;
 };
 
 export const chatConfigPath =
@@ -28,7 +53,8 @@ export const chatConfigPath =
 
 const defaultChatConfig: ChatConfig = {
   apiKey: "",
-  model: "gpt-4.1-mini"
+  model: "gpt-4.1-mini",
+  speakReplies: false
 };
 
 function normalizeChatConfig(input: unknown): ChatConfig {
@@ -40,7 +66,8 @@ function normalizeChatConfig(input: unknown): ChatConfig {
 
   return {
     apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
-    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : defaultChatConfig.model
+    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : defaultChatConfig.model,
+    speakReplies: typeof candidate.speakReplies === "boolean" ? candidate.speakReplies : defaultChatConfig.speakReplies
   };
 }
 
@@ -115,7 +142,7 @@ export async function listOpenAiModels(input: unknown = {}) {
     return {
       models: [savedConfig.model || defaultChatConfig.model],
       selectedModel: savedConfig.model || defaultChatConfig.model,
-      needsToken: true
+      needsApiKey: true
     };
   }
 
@@ -140,7 +167,7 @@ export async function listOpenAiModels(input: unknown = {}) {
   return {
     models,
     selectedModel,
-    needsToken: false
+    needsApiKey: false
   };
 }
 
@@ -149,7 +176,7 @@ export async function transcribeAudio(body: TranscribeRequestBody) {
   const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : savedConfig.apiKey;
 
   if (!apiKey) {
-    throw new Error("Expected an OpenAI API token.");
+    throw new Error("Expected an OpenAI API key.");
   }
 
   const audio = body.audio && typeof body.audio === "object" ? (body.audio as Record<string, unknown>) : {};
@@ -246,7 +273,7 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
   const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : savedConfig.apiKey;
 
   if (!apiKey) {
-    throw new Error("Expected an OpenAI API token.");
+    throw new Error("Expected an OpenAI API key.");
   }
 
   const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : savedConfig.model;
@@ -267,8 +294,7 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
   const messages: any[] = [
     {
       role: "system",
-      content:
-        "You operate local micrOS embedded devices for the user through the available MCP tools. Follow the user's intent, use filter_devices to select targets by name or capability, and use list_devices for compact inventory. Running commands can change real device state, so choose targets carefully. Use set_device_note to persist helpful per-device context such as location, peripherals, wiring, or command interpretation notes."
+      content: chatSystemPrompt
     },
     ...incomingMessages
   ];

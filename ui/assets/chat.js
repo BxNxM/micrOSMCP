@@ -2,6 +2,29 @@ function formatJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
+export function toolEventTitle(event = {}) {
+  const name = typeof event.name === "string" && event.name ? event.name : "tool";
+  let input = "";
+
+  if (name === "run_command") {
+    const rawCommand = event.arguments?.command;
+    const separator = typeof event.arguments?.separator === "string" ? event.arguments.separator : "<a>";
+    input = Array.isArray(rawCommand)
+      ? rawCommand.map((entry) => String(entry)).join(` ${separator} `)
+      : typeof rawCommand === "string"
+        ? rawCommand
+        : "";
+  } else if (name === "filter_devices" && typeof event.arguments?.query === "string") {
+    input = event.arguments.query;
+  }
+
+  return `${name} tool${input ? `: ${input}` : ""}`;
+}
+
+export function shouldSubmitChatOnKeyDown(event = {}) {
+  return event.key === "Enter" && !event.shiftKey && !event.isComposing;
+}
+
 function appendInlineMarkdown(parent, text) {
   const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
   let cursor = 0;
@@ -262,8 +285,8 @@ function createChatElement() {
       <h2>AI Chat</h2>
       <div class="chat-settings">
         <label>
-          <span>Token</span>
-          <input data-chat-token type="password" autocomplete="off" placeholder="OpenAI API token" />
+          <span>API key</span>
+          <input data-chat-api-key type="password" autocomplete="off" placeholder="OpenAI API key" />
         </label>
         <label>
           <span>Model</span>
@@ -324,7 +347,7 @@ export function speechRecognitionSupport({
 
     return {
       ok: false,
-      reason: `Microphone requires HTTPS or localhost. Open the UI from ${localUrl} on this machine.`,
+      reason: `Microphone requires HTTPS for LAN addresses. Open ${localUrl} on this machine, or use the HTTPS URL printed by the UI server.`,
       Recognition: null
     };
   }
@@ -352,7 +375,7 @@ export function audioRecordingSupport({
 
     return {
       ok: false,
-      reason: `Microphone requires HTTPS or localhost. Open the UI from ${localUrl} on this machine.`
+      reason: `Microphone requires HTTPS for LAN addresses. Open ${localUrl} on this machine, or use the HTTPS URL printed by the UI server.`
     };
   }
 
@@ -404,7 +427,7 @@ export function initChat({ mount, onToolEvent } = {}) {
   }
 
   const root = createChatElement();
-  const apiTokenInput = root.querySelector("[data-chat-token]");
+  const apiKeyInput = root.querySelector("[data-chat-api-key]");
   const modelInput = root.querySelector("[data-chat-model]");
   const refreshModelsButton = root.querySelector("[data-chat-refresh-models]");
   const speakReplies = root.querySelector("[data-chat-speak]");
@@ -440,10 +463,12 @@ export function initChat({ mount, onToolEvent } = {}) {
   function appendChatMessage(role, text) {
     const message = document.createElement("div");
     message.className = `chat-message ${role}`;
+    const toolEvents = document.createElement("div");
+    toolEvents.className = "chat-tool-events";
     const body = document.createElement("div");
     body.className = "chat-message-body";
     renderChatMessageBody(body, role, text || (role === "assistant" ? "No text response." : ""));
-    message.append(body);
+    message.append(toolEvents, body);
     chatLog.append(message);
     chatLog.scrollTop = chatLog.scrollHeight;
     return message;
@@ -466,7 +491,7 @@ export function initChat({ mount, onToolEvent } = {}) {
     details.className = "chat-tool-details";
 
     const summary = document.createElement("summary");
-    summary.textContent = `${event.name} raw tool response`;
+    summary.textContent = toolEventTitle(event);
 
     const output = document.createElement("pre");
     output.textContent = formatJson({
@@ -476,7 +501,8 @@ export function initChat({ mount, onToolEvent } = {}) {
     });
 
     details.append(summary, output);
-    message.append(details);
+    const toolEvents = message.querySelector(".chat-tool-events");
+    (toolEvents ?? message).append(details);
   }
 
   function speak(text) {
@@ -527,7 +553,7 @@ export function initChat({ mount, onToolEvent } = {}) {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        apiKey: apiTokenInput.value,
+        apiKey: apiKeyInput.value,
         model: selectedModel(),
         messages: chatMessages
       })
@@ -549,7 +575,8 @@ export function initChat({ mount, onToolEvent } = {}) {
       throw new Error(payload.error || "Failed to load chat config.");
     }
 
-    apiTokenInput.value = payload.apiKey ?? "";
+    apiKeyInput.value = payload.apiKey ?? "";
+    speakReplies.checked = Boolean(payload.speakReplies);
     setModelOptions([payload.model || "gpt-4.1-mini"], payload.model || "gpt-4.1-mini");
   }
 
@@ -560,8 +587,9 @@ export function initChat({ mount, onToolEvent } = {}) {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        apiKey: apiTokenInput.value,
-        model: selectedModel()
+        apiKey: apiKeyInput.value,
+        model: selectedModel(),
+        speakReplies: speakReplies.checked
       })
     });
 
@@ -601,7 +629,7 @@ export function initChat({ mount, onToolEvent } = {}) {
     refreshModelsButton.disabled = true;
 
     try {
-      if (!apiTokenInput.value.trim()) {
+      if (!apiKeyInput.value.trim()) {
         setModelOptions([selectedModel()], selectedModel());
         return;
       }
@@ -612,7 +640,7 @@ export function initChat({ mount, onToolEvent } = {}) {
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          apiKey: apiTokenInput.value
+          apiKey: apiKeyInput.value
         })
       });
       const payload = await response.json();
@@ -660,9 +688,9 @@ export function initChat({ mount, onToolEvent } = {}) {
       return;
     }
 
-    if (!apiTokenInput.value.trim()) {
-      appendChatMessage("error", "OpenAI API token is required.");
-      apiTokenInput.focus();
+    if (!apiKeyInput.value.trim()) {
+      appendChatMessage("error", "OpenAI API key is required.");
+      apiKeyInput.focus();
       return;
     }
 
@@ -682,9 +710,9 @@ export function initChat({ mount, onToolEvent } = {}) {
       }
 
       const reply = payload.message || "Done.";
+      appendToolEvents(payload.toolEvents, pending);
       setChatMessageText(pending, reply);
       chatMessages.push({ role: "assistant", content: reply });
-      appendToolEvents(payload.toolEvents, pending);
       speak(reply);
     } catch (error) {
       if (requestVersion !== chatVersion) {
@@ -708,7 +736,7 @@ export function initChat({ mount, onToolEvent } = {}) {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        apiKey: apiTokenInput.value,
+        apiKey: apiKeyInput.value,
         audio: {
           base64,
           type: blob.type || "audio/webm",
@@ -810,9 +838,9 @@ export function initChat({ mount, onToolEvent } = {}) {
   }
 
   async function startRecording() {
-    if (!apiTokenInput.value.trim()) {
-      listenStatus.textContent = "OpenAI API token is required for Safari microphone transcription.";
-      apiTokenInput.focus();
+    if (!apiKeyInput.value.trim()) {
+      listenStatus.textContent = "OpenAI API key is required for Safari microphone transcription.";
+      apiKeyInput.focus();
       return;
     }
 
@@ -904,6 +932,16 @@ export function initChat({ mount, onToolEvent } = {}) {
   }
 
   chatForm.addEventListener("submit", sendChatMessage);
+  chatInput.addEventListener("keydown", (event) => {
+    if (!shouldSubmitChatOnKeyDown(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (!sendChat.disabled) {
+      chatForm.requestSubmit();
+    }
+  });
   listenButton.addEventListener("click", toggleListening);
   clearChatButton.addEventListener("click", clearChatHistory);
   refreshModelsButton.addEventListener("click", loadAvailableModels);
@@ -911,9 +949,10 @@ export function initChat({ mount, onToolEvent } = {}) {
     if (!speakReplies.checked) {
       stopSpeaking();
     }
+    queueSaveChatConfig();
   });
-  apiTokenInput.addEventListener("input", queueSaveChatConfig);
-  apiTokenInput.addEventListener("blur", queueSaveAndRefreshModels);
+  apiKeyInput.addEventListener("input", queueSaveChatConfig);
+  apiKeyInput.addEventListener("blur", queueSaveAndRefreshModels);
   modelInput.addEventListener("change", queueSaveChatConfig);
 
   setupSpeechRecognition();

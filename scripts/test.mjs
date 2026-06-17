@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { X509Certificate } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,31 +12,42 @@ import {
   parseModules,
   pruneDeviceFeaturesForQuery
 } from "../dist/mcp/tools/common.js";
-import { toolDefinitions } from "../dist/mcp/tools/registry.js";
-import { accessUrls } from "../dist/ui/server.js";
-import { audioRecordingSupport, speechRecognitionSupport } from "../ui/assets/chat.js";
+import { toolDefinitions } from "../dist/mcp/tool-registry.js";
+import { accessUrls, ensureSelfSignedCertificate } from "../dist/ui/server.js";
+import {
+  audioRecordingSupport,
+  shouldSubmitChatOnKeyDown,
+  speechRecognitionSupport,
+  toolEventTitle
+} from "../ui/assets/chat.js";
 
 const requiredPaths = [
   "AGENTS.md",
   "Dockerfile",
   "README.md",
   "package.json",
+  "scripts/clean-dist.mjs",
   "scripts/docker-build.mjs",
+  "scripts/copy-mcp-metadata.mjs",
   "scripts/start.mjs",
   "scripts/test.mjs",
+  "mcp/description.md",
   "mcp/initialize.ts",
   "mcp/index.ts",
+  "mcp/metadata.ts",
   "mcp/mcp-tools.ts",
+  "mcp/tool-definition.ts",
+  "mcp/tool-loader.ts",
+  "mcp/tool-registry.ts",
   "mcp/tools.ts",
   "mcp/tools/common.ts",
-  "mcp/tools/definition.ts",
-  "mcp/tools/registry.ts",
   "mcp/tools/set-device-note.ts",
   "ui/assets/app.js",
   "ui/assets/chat.css",
   "ui/assets/chat.js",
   "ui/assets/index.html",
   "ui/assets/styles.css",
+  "ui/chat-system-prompt.md",
   "ui/chat-bridge.ts",
   "ui/server.ts"
 ];
@@ -57,6 +69,32 @@ function testRequiredProjectFiles() {
   assert.deepEqual(missing, [], `missing required project files: ${missing.join(", ")}`);
 }
 
+function listMarkdownFiles(dir) {
+  const files = [];
+
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    const stat = statSync(path);
+
+    if (stat.isDirectory()) {
+      files.push(...listMarkdownFiles(path));
+    } else if (path.endsWith(".md")) {
+      files.push(path);
+    }
+  }
+
+  return files;
+}
+
+function testMcpMetadataFilesCopied() {
+  for (const sourcePath of listMarkdownFiles("mcp")) {
+    const distPath = `dist/${sourcePath}`;
+
+    assert.ok(existsSync(distPath), `${distPath} should be copied by npm run build`);
+    assert.equal(readFileSync(distPath, "utf8"), readFileSync(sourcePath, "utf8"), `${distPath} should match ${sourcePath}`);
+  }
+}
+
 function testDockerExcludesRuntimeData() {
   const dockerignore = readFileSync(".dockerignore", "utf8")
     .split(/\r?\n/)
@@ -70,6 +108,12 @@ function testDockerExcludesRuntimeData() {
   );
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+(?:--\S+\s+)*data(?:\s|\/)/m, "Dockerfile must not copy local data/");
   assert.match(dockerfile, /^\s*RUN\s+mkdir\s+-p\s+data\s*$/m, "Docker image may only create an empty data directory");
+  assert.match(dockerfile, /^\s*COPY\s+media\s+\.\/media\s*$/m, "Docker build stage should include UI media assets");
+  assert.match(
+    dockerfile,
+    /^\s*COPY\s+--from=build\s+\/app\/media\s+\.\/media\s*$/m,
+    "Docker runtime should include UI media assets"
+  );
 }
 
 function testCliHelpEntrypoints() {
@@ -106,17 +150,94 @@ function testNetworkPrefixEnvironmentOverride() {
   );
 }
 
+function testChatConfigPersistence() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-chat-config-"));
+  const configPath = join(tempDir, "ui_chat_config.json");
+  writeFileSync(configPath, JSON.stringify({ apiKey: "test-key", model: "test-model" }));
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        [
+          "const config = await import('./dist/ui/chat-bridge.js');",
+          "const legacy = await config.readChatConfig();",
+          "const saved = await config.saveChatConfig({ apiKey: 'new-key', model: 'new-model', speakReplies: true });",
+          "const reloaded = await config.readChatConfig();",
+          "console.log(JSON.stringify({ legacy, saved, reloaded }));"
+        ].join(" ")
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          MICROS_CHAT_CONFIG_PATH: configPath
+        }
+      }
+    );
+
+    assert.equal(result.status, 0, `chat config persistence test failed:\n${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.legacy.speakReplies, false, "legacy chat config should default Speak to off");
+    assert.deepEqual(
+      parsed.saved,
+      { apiKey: "new-key", model: "new-model", speakReplies: true },
+      "saved chat config should include the Speak setting"
+    );
+    assert.deepEqual(parsed.reloaded, parsed.saved, "Speak setting should persist across config reads");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function testUiAccessUrls() {
   assert.deepEqual(
     accessUrls("0.0.0.0", 3333, ["192.168.1.50", "10.0.1.42"], "10.0.1"),
-    ["http://127.0.0.1:3333", "http://10.0.1.42:3333", "http://192.168.1.50:3333"],
+    ["https://127.0.0.1:3333", "https://10.0.1.42:3333", "https://192.168.1.50:3333"],
     "wildcard UI bind should print localhost and prioritize the micrOS LAN address"
   );
   assert.deepEqual(
     accessUrls("127.0.0.1", 3333, ["10.0.1.42"], "10.0.1"),
-    ["http://127.0.0.1:3333"],
+    ["https://127.0.0.1:3333"],
     "explicit loopback UI bind should only print loopback"
   );
+  assert.deepEqual(
+    accessUrls("0.0.0.0", 3333, ["10.0.1.42"], "10.0.1", "http"),
+    ["http://127.0.0.1:3333", "http://10.0.1.42:3333"],
+    "URL formatting should support an explicit protocol"
+  );
+}
+
+function testUiTabStructure() {
+  const html = readFileSync("ui/assets/index.html", "utf8");
+  assert.match(html, /src="\/media\/logo\.png"/, "tester UI should show the project logo");
+  assert.match(html, /role="tablist"/, "tester UI should expose a tab list");
+  assert.match(html, /data-view-tab="chat"[^>]*aria-selected="true"|aria-selected="true"[^>]*data-view-tab="chat"/, "chat should be the default selected tab");
+  assert.match(html, /data-view-panel="chat"/, "tester UI should have a chat tab panel");
+  assert.match(html, /data-view-panel="tools"[^>]*hidden/, "MCP tools tab panel should be hidden initially");
+  assert.match(html, /id="mcpDescription"/, "MCP tools tab should include the server description");
+  assert.match(html, /id="mcpVersion"/, "MCP tools tab should include server version metadata");
+}
+
+async function testUiSelfSignedCertificate() {
+  const tempDir = mkdtempSync(join(tmpdir(), "microsmcp-tls-"));
+
+  try {
+    const hosts = ["localhost", "127.0.0.1", "10.0.1.42"];
+    const generated = await ensureSelfSignedCertificate(tempDir, hosts);
+    const certificate = new X509Certificate(generated.cert);
+
+    assert.equal(certificate.checkHost("localhost"), "localhost", "generated certificate should cover localhost");
+    assert.equal(certificate.checkIP("10.0.1.42"), "10.0.1.42", "generated certificate should cover LAN IPs");
+    assert.equal(statSync(join(tempDir, "ui-self-signed-key.pem")).mode & 0o777, 0o600, "private key should be owner-only");
+
+    const reused = await ensureSelfSignedCertificate(tempDir, hosts);
+    assert.deepEqual(reused.cert, generated.cert, "valid generated certificates should be reused");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function testSpeechRecognitionSupport() {
@@ -183,18 +304,67 @@ function testSpeechRecognitionSupport() {
   );
 }
 
+function testToolEventTitles() {
+  assert.equal(
+    toolEventTitle({ name: "list_devices", arguments: {} }),
+    "list_devices tool",
+    "regular tool event titles should retain the tool name"
+  );
+  assert.equal(
+    toolEventTitle({ name: "filter_devices", arguments: { query: "temperature sensors" } }),
+    "filter_devices tool: temperature sensors",
+    "filter_devices event titles should include the query"
+  );
+  assert.equal(
+    toolEventTitle({ name: "run_command", arguments: { command: "version" } }),
+    "run_command tool: version",
+    "run_command event titles should include string commands"
+  );
+  assert.equal(
+    toolEventTitle({ name: "run_command", arguments: { command: ["version", "system info"], separator: "<a>" } }),
+    "run_command tool: version <a> system info",
+    "run_command event titles should include command pipelines"
+  );
+}
+
+function testChatKeyboardSubmission() {
+  assert.equal(shouldSubmitChatOnKeyDown({ key: "Enter" }), true, "Enter should submit chat messages");
+  assert.equal(
+    shouldSubmitChatOnKeyDown({ key: "Enter", shiftKey: true }),
+    false,
+    "Shift+Enter should insert a newline"
+  );
+  assert.equal(
+    shouldSubmitChatOnKeyDown({ key: "Enter", isComposing: true }),
+    false,
+    "Enter should not submit while an input method is composing text"
+  );
+  assert.equal(shouldSubmitChatOnKeyDown({ key: "a" }), false, "other keys should not submit chat messages");
+}
+
 function testToolRegistry() {
   assert.equal(toolDefinitions.length, 6, "expected six registered tools");
 
   const names = toolDefinitions.map((tool) => tool.name);
   assert.deepEqual([...new Set(names)], names, "tool names must be unique");
-  assert.equal(names[0], "filter_devices", "filter_devices should be the first/default device selection tool");
+  assert.deepEqual(names, [...names].sort(), "discovered tools should be sorted by inferred tool name");
+  assert.ok(names.includes("filter_devices"), "filter_devices should be available as the primary device selection tool");
   assert.ok(names.includes("set_device_note"), "set_device_note should be available for persistent device context");
 
   for (const tool of toolDefinitions) {
+    const expectedTitle = tool.name
+      .split("_")
+      .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+      .join(" ");
+
     assert.equal(typeof tool.name, "string", "tool name must be a string");
-    assert.equal(typeof tool.title, "string", `${tool.name} title must be a string`);
+    assert.equal(tool.title, expectedTitle, `${tool.name} title should be inferred from its filename`);
     assert.equal(typeof tool.description, "string", `${tool.name} description must be a string`);
+    assert.equal(
+      tool.description,
+      readFileSync(`dist/mcp/tools/${tool.name.replaceAll("_", "-")}.md`, "utf8").trim(),
+      `${tool.name} description should be loaded from its Markdown metadata file`
+    );
     assert.equal(typeof tool.handler, "function", `${tool.name} handler must be a function`);
     assert.ok(tool.inputSchema && typeof tool.inputSchema === "object", `${tool.name} must expose an input schema`);
   }
@@ -726,11 +896,17 @@ async function testLegacyFeatureNotesMigrateOnFeatureSave() {
 }
 
 testRequiredProjectFiles();
+testMcpMetadataFilesCopied();
 testDockerExcludesRuntimeData();
 testCliHelpEntrypoints();
 testNetworkPrefixEnvironmentOverride();
+testChatConfigPersistence();
 testUiAccessUrls();
+testUiTabStructure();
+await testUiSelfSignedCertificate();
 testSpeechRecognitionSupport();
+testToolEventTitles();
+testChatKeyboardSubmission();
 testToolRegistry();
 testCommandParsing();
 testModuleParsing();

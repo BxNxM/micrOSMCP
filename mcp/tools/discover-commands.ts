@@ -15,7 +15,7 @@ import {
   saveDeviceFeatureCache,
   socketErrorMessage
 } from "./common.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type DiscoverCommandsInput = {
   deviceTag?: string;
@@ -154,11 +154,7 @@ export async function discoverCommands(input: DiscoverCommandsInput = {}) {
   };
 }
 
-export const discoverCommandsTool = defineTool<DiscoverCommandsInput>({
-  name: "discover_commands",
-  title: "Discover Commands",
-  description:
-    "Discover and cache available micrOS modules/functions by running modules, then <module> help, on all cached devices or one selected device.",
+export const discoverCommandsTool = defineTool<DiscoverCommandsInput>(import.meta.url, {
   inputSchema: {
     deviceTag: z
       .string()

@@ -6,4 +6,6 @@ data/device_conn_cache.json
 data/ui_chat_config.json
 data/device_feature_cache.json
 data/device_notes_cache.json
+data/ui-self-signed-cert.pem
+data/ui-self-signed-key.pem
 package-lock.json

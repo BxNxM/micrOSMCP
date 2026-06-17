@@ -9,57 +9,77 @@
   </head>
   <body>
     <main class="shell">
-      <section class="toolbar" aria-label="MCP tool tester">
-        <div>
-          <h1>micrOSMCP</h1>
-          <p>Local MCP tool tester</p>
+      <section class="toolbar" aria-label="micrOSMCP tester">
+        <div class="brand">
+          <img class="brand-logo" src="/media/logo.png" alt="" width="56" height="56" />
+          <div>
+            <h1>micrOSMCP</h1>
+            <p>Local chat and MCP tool tester</p>
+          </div>
         </div>
-        <button id="refreshTools" type="button" title="Refresh tools" aria-label="Refresh tools">
-          <span aria-hidden="true">↻</span>
-        </button>
       </section>
 
-      <div id="chatMount"></div>
+      <nav class="view-tabs" role="tablist" aria-label="Tester views">
+        <button id="chatTab" class="view-tab active" type="button" role="tab" aria-selected="true" aria-controls="chatView" data-view-tab="chat">Chat</button>
+        <button id="toolsTab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="toolsView" tabindex="-1" data-view-tab="tools">MCP Tools</button>
+      </nav>
 
-      <section class="workspace">
-        <aside class="tools-panel">
-          <div class="panel-heading">
-            <h2>Tools</h2>
-            <span id="toolCount">0</span>
+      <section id="chatView" class="view-panel" role="tabpanel" aria-labelledby="chatTab" data-view-panel="chat">
+        <div id="chatMount"></div>
+      </section>
+
+      <section id="toolsView" class="view-panel" role="tabpanel" aria-labelledby="toolsTab" data-view-panel="tools" hidden>
+        <section class="mcp-description" aria-labelledby="mcpDescriptionTitle">
+          <div class="mcp-description-heading">
+            <h2 id="mcpDescriptionTitle">About this MCP server</h2>
+            <span id="mcpVersion" class="metadata-badge" hidden></span>
           </div>
-          <nav id="toolList" class="tool-list" aria-label="Available MCP tools"></nav>
-        </aside>
-
-        <section class="runner">
-          <div class="runner-header">
-            <div>
-              <h2 id="selectedToolName">Select a tool</h2>
-              <p id="selectedToolDescription">Choose a tool to inspect its schema and call it.</p>
-            </div>
-            <button id="runTool" type="button" disabled>Run</button>
-          </div>
-
-          <div class="editor-grid">
-            <section class="field">
-              <span>Parameters</span>
-              <form id="parameterForm" class="parameter-form"></form>
-            </section>
-            <label class="field">
-              <span>Arguments JSON</span>
-              <textarea id="argumentsInput" spellcheck="false" disabled>{}</textarea>
-            </label>
-          </div>
-
-          <details class="schema-panel">
-            <summary>Input schema</summary>
-            <pre id="schemaOutput">{}</pre>
-          </details>
-
-          <label class="field result-field">
-            <span>Result</span>
-            <pre id="resultOutput">No calls yet.</pre>
-          </label>
+          <p id="mcpDescription">Loading server description...</p>
         </section>
+
+        <div class="workspace">
+          <aside class="tools-panel">
+            <div class="panel-heading">
+              <h2>Tools</h2>
+              <div class="panel-heading-actions">
+                <span id="toolCount">0</span>
+                <button id="refreshTools" type="button" title="Refresh tools" aria-label="Refresh tools"><span aria-hidden="true">↻</span></button>
+              </div>
+            </div>
+            <nav id="toolList" class="tool-list" aria-label="Available MCP tools"></nav>
+          </aside>
+
+          <section class="runner">
+            <div class="runner-header">
+              <div>
+                <h2 id="selectedToolName">Select a tool</h2>
+                <p id="selectedToolDescription">Choose a tool to inspect its schema and call it.</p>
+              </div>
+              <button id="runTool" type="button" disabled>Run</button>
+            </div>
+
+            <div class="editor-grid">
+              <section class="field">
+                <span>Parameters</span>
+                <form id="parameterForm" class="parameter-form"></form>
+              </section>
+              <label class="field">
+                <span>Arguments JSON</span>
+                <textarea id="argumentsInput" spellcheck="false" disabled>{}</textarea>
+              </label>
+            </div>
+
+            <details class="schema-panel">
+              <summary>Input schema</summary>
+              <pre id="schemaOutput">{}</pre>
+            </details>
+
+            <label class="field result-field">
+              <span>Result</span>
+              <pre id="resultOutput">No calls yet.</pre>
+            </label>
+          </section>
+        </div>
       </section>
     </main>
 

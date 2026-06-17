@@ -10,11 +10,17 @@ const parameterForm = document.querySelector("#parameterForm");
 const argumentsInput = document.querySelector("#argumentsInput");
 const schemaOutput = document.querySelector("#schemaOutput");
 const resultOutput = document.querySelector("#resultOutput");
+const mcpDescription = document.querySelector("#mcpDescription");
+const mcpVersion = document.querySelector("#mcpVersion");
 const chatMount = document.querySelector("#chatMount");
+const viewTabs = Array.from(document.querySelectorAll("[data-view-tab]"));
+const viewPanels = Array.from(document.querySelectorAll("[data-view-panel]"));
 
 let tools = [];
 let devices = [];
 let selectedTool = null;
+let toolsLoaded = false;
+let toolsLoading = false;
 
 function formatJson(value) {
   return JSON.stringify(value, null, 2);
@@ -359,6 +365,7 @@ function renderTools() {
 }
 
 async function loadTools() {
+  toolsLoading = true;
   refreshTools.disabled = true;
   setResult("Loading tools...");
 
@@ -371,14 +378,62 @@ async function loadTools() {
     }
 
     tools = payload.tools ?? [];
+    mcpDescription.textContent = payload.instructions || "No server description provided.";
+    const serverName = payload.serverInfo?.name || "MCP";
+    const serverVersion = payload.serverInfo?.version;
+    mcpVersion.hidden = !serverVersion;
+    mcpVersion.textContent = serverVersion ? `${serverName} v${serverVersion}` : "";
     await refreshDevices();
     renderTools();
+    toolsLoaded = true;
     setResult("Tools loaded.");
   } catch (error) {
+    mcpDescription.textContent = "Server description is unavailable.";
+    mcpVersion.hidden = true;
+    mcpVersion.textContent = "";
     setResult(error instanceof Error ? error.message : "Failed to load tools.", true);
   } finally {
+    toolsLoading = false;
     refreshTools.disabled = false;
   }
+}
+
+function selectView(viewName, focusTab = false) {
+  const selectedTab = viewTabs.find((tab) => tab.dataset.viewTab === viewName) ?? viewTabs[0];
+  const selectedView = selectedTab.dataset.viewTab;
+
+  for (const tab of viewTabs) {
+    const selected = tab === selectedTab;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+
+  for (const panel of viewPanels) {
+    panel.hidden = panel.dataset.viewPanel !== selectedView;
+  }
+
+  if (focusTab) {
+    selectedTab.focus();
+  }
+
+  if (selectedView === "tools" && !toolsLoaded && !toolsLoading) {
+    void loadTools();
+  }
+}
+
+for (const [index, tab] of viewTabs.entries()) {
+  tab.addEventListener("click", () => selectView(tab.dataset.viewTab));
+  tab.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+
+    event.preventDefault();
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const nextTab = viewTabs[(index + direction + viewTabs.length) % viewTabs.length];
+    selectView(nextTab.dataset.viewTab, true);
+  });
 }
 
 async function callSelectedTool() {
@@ -428,4 +483,4 @@ initChat({
   }
 });
 
-await loadTools();
+selectView("chat");

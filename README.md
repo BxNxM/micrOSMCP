@@ -3,10 +3,31 @@
 
 [![DockerHub](https://img.shields.io/badge/DockerHub-micrOS%20MCP-blue)](https://hub.docker.com/r/bxnxm/micros-mcp)
 
+<a id="top"></a>
 # micrOSMCP
 
 Standalone TypeScript MCP server and browser tester UI for micrOS devices. Use it to discover devices, inspect the device cache, run micrOS commands, and discover each device's available module commands.
 
+<a id="table-of-contents"></a>
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Use With An MCP Client](#mcp-client)
+- [Commands](#commands)
+- [Tools](#tools)
+  - [`run_command`](#tool-run-command)
+  - [`set_device_note`](#tool-set-device-note)
+  - [`filter_devices`](#tool-filter-devices)
+  - [`discover_devices`](#tool-discover-devices)
+  - [`discover_commands`](#tool-discover-commands)
+- [How Tools Are Defined](#how-tools-are-defined)
+  - [Add A New Tool](#add-a-new-tool)
+- [Device Cache](#device-cache)
+- [Docker](#docker)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+
+<a id="quick-start"></a>
 ## Quick Start
 
 ```sh
@@ -17,16 +38,27 @@ npm run start:ui
 Open one of the printed URLs. The UI binds on all interfaces by default and prints localhost plus any detected LAN addresses, such as:
 
 ```text
-http://127.0.0.1:3333
-http://10.0.1.42:3333
+https://127.0.0.1:3333
+https://10.0.1.42:3333
 ```
 
-The UI is the easiest way to verify everything locally. It includes an optional AI chat panel for testing the MCP tools with an OpenAI API token, plus manual tool forms that render schemas, keep JSON arguments editable, and give device dropdowns for device-targeted tools.
+The UI is the easiest way to verify everything locally. It includes an optional AI chat panel for testing the MCP tools with an OpenAI API key, plus manual tool forms that render schemas, keep JSON arguments editable, and give device dropdowns for device-targeted tools.
 
-Browser microphone access for the listen button requires a secure origin. Use the printed `127.0.0.1` URL on the host machine, or serve the UI over HTTPS; plain `http://10.0.1.x` LAN URLs usually disable microphone input in the browser. Browsers with speech recognition use live dictation; Safari falls back to recording audio and transcribing it with the saved OpenAI token.
+Browser microphone access for the listen button requires a secure origin, so the UI automatically creates and serves HTTPS with a self-signed certificate stored in `data/ui-self-signed-cert.pem` and its private key in `data/ui-self-signed-key.pem`. The certificate includes localhost and detected LAN addresses and is reused until it expires or the address list changes. The server prints `https://` URLs for every detected local address.
 
-The AI chat token is saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse it. Override that path with `MICROS_CHAT_CONFIG_PATH` if you want to keep the token somewhere else. The model dropdown loads available LLM-style OpenAI models for the saved token. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
+Client devices must trust `data/ui-self-signed-cert.pem` before their browsers will permit microphone access. Accepting the certificate warning is sufficient in browsers that then treat the connection as secure, including Safari in typical local setups; other clients may require installing the certificate as trusted.
 
+`MICROS_UI_CERT_HOSTS` adds IP addresses or DNS hostnames to the generated certificate. Multiple values are comma-separated:
+
+```sh
+MICROS_UI_CERT_HOSTS=gateway.local,10.0.1.42 npm run start:ui
+```
+
+The hostname must resolve to the UI host from the client device. Changing this list or the detected addresses regenerates the certificate, so clients must accept or trust the replacement certificate. The UI always uses HTTPS, even when `MICROS_UI_CERT_HOSTS` is omitted; it never falls back to HTTP. Browsers with speech recognition use live dictation; Safari falls back to recording audio and transcribing it with the saved OpenAI API key.
+
+The AI chat API key, selected model, and Speak setting are saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse them. Override that path with `MICROS_CHAT_CONFIG_PATH` if you want to keep the API key somewhere else. The model dropdown loads available LLM-style OpenAI models for the saved API key. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
+
+<a id="mcp-client"></a>
 ## Use With An MCP Client
 
 Build first:
@@ -73,11 +105,12 @@ Use `--silent` with npm in MCP client config so npm does not print lifecycle ban
 }
 ```
 
+<a id="commands"></a>
 ## Commands
 
 ```sh
 npm run help                  # Show start modes and environment variables
-npm run build                 # Compile TypeScript into dist/
+npm run build                 # Clean dist, compile TypeScript, and copy MCP metadata
 npm run start                 # Start stdio MCP server from dist/
 npm run start:test            # Build and run minimal MCP/tool contract tests
 npm run start -- ui           # Start UI from dist/ without rebuilding
@@ -103,6 +136,7 @@ MICROS_CHAT_CONFIG_PATH=/path/to/ui_chat_config.json npm run start -- ui
 HOST=0.0.0.0 PORT=3333 npm run start -- ui
 ```
 
+<a id="tools"></a>
 ## Tools
 
 The MCP server exposes six tools.
@@ -116,6 +150,7 @@ The MCP server exposes six tools.
 | `set_device_note` | Add, append, replace, or clear persistent notes for a cached device. |
 | `discover_commands` | Run `modules`, then `<module> help`, to map and cache a device's command surface. |
 
+<a id="tool-run-command"></a>
 ### `run_command`
 
 String pipeline using the micrOS `<a>` separator:
@@ -138,6 +173,7 @@ Array pipeline:
 
 Use read-only commands such as `version` for smoke tests. Other micrOS commands may change device state.
 
+<a id="tool-set-device-note"></a>
 ### `set_device_note`
 
 Store persistent context about a device, such as location, attached peripherals, wiring, or command interpretation hints:
@@ -152,6 +188,7 @@ Store persistent context about a device, such as location, attached peripherals,
 
 Use `mode: "append"` to add a line without replacing existing notes, or `mode: "clear"` to remove the note. Notes are stored by device name in `data/device_notes_cache.json`, survive feature rediscovery, and are shown by `list_devices` and `filter_devices`.
 
+<a id="tool-filter-devices"></a>
 ### `filter_devices`
 
 Use this as the primary device selection tool when you know part of a device name or part of a capability:
@@ -173,6 +210,7 @@ Check live status while filtering:
 }
 ```
 
+<a id="tool-discover-devices"></a>
 ### `discover_devices`
 
 ```json
@@ -193,6 +231,7 @@ If `networkPrefix` is omitted, the server uses `MICROS_NETWORK_PREFIX` when set,
 
 Discovery is a fresh network scan every time this tool runs. By default, it also refreshes the feature cache for newly discovered devices, but the tool response stays compact with module and command counts rather than full function details. Set `refreshFeatures` to `false` when you only want to update device addresses. Use `featureConcurrency` to control how many discovered devices are inspected in parallel during feature refresh.
 
+<a id="tool-discover-commands"></a>
 ### `discover_commands`
 
 All cached devices:
@@ -223,33 +262,38 @@ The response includes per-module raw help plus a flattened `commands` list:
 
 Use `password` if the device requires micrOS app authentication.
 
+<a id="how-tools-are-defined"></a>
 ## How Tools Are Defined
 
-Each MCP tool is defined in one file under `mcp/tools/`. That file owns both:
+Each MCP tool is defined in one file under `mcp/tools/` plus one adjacent Markdown description file. The TypeScript file owns:
 
 - the business function, such as `runCommand(...)`
 - the MCP definition object, such as `runCommandTool`
 
-That keeps the tool name, title, description, Zod input schema, and behavior together. `mcp/mcp-tools.ts` only registers the collected definitions and formats MCP responses. `mcp/tools.ts` is the public barrel for tool functions, tool definitions, and shared types.
+The file basename is the metadata source of truth: `mcp/tools/run-command.ts` becomes the MCP tool `run_command` with title `Run Command`. The adjacent `mcp/tools/run-command.md` file owns the MCP-facing tool description. This keeps each tool standalone while allowing the generic MCP registrar to discover tools dynamically.
+
+Server-level MCP instructions are stored in `mcp/description.md` and loaded at startup. The tester chat system prompt is stored separately in `ui/chat-system-prompt.md`. `mcp/mcp-tools.ts` only discovers tool modules, registers the collected definitions, and formats MCP responses. Generic MCP helper code lives in `mcp/tool-definition.ts`, `mcp/tool-loader.ts`, and `mcp/tool-registry.ts`. `mcp/tools.ts` is the public barrel for tool functions, tool definitions, and shared types.
 
 The rough call path is:
 
 ```text
 MCP client
   -> mcp/index.ts
-  -> registerMicrOSTools() in mcp/mcp-tools.ts
-  -> toolDefinitions from mcp/tools/registry.ts
+  -> registerMcpTools() in mcp/mcp-tools.ts
+  -> loadToolDefinitions() in mcp/tool-loader.ts scans mcp/tools/
   -> focused definition + implementation in mcp/tools/<tool-name>.ts
+  -> description text from mcp/tools/<tool-name>.md
   -> shared micrOS helpers in mcp/tools/common.ts when needed
 ```
 
+<a id="add-a-new-tool"></a>
 ### Add A New Tool
 
 1. Create a focused tool file under `mcp/tools/`, for example `mcp/tools/reboot-device.ts`.
 2. Define the tool input type in that same file. Put types in `mcp/tools/common.ts` only when they are genuinely shared helper types.
-3. In the same file, export the business function and a `MicrOSToolDefinition`.
-4. Add the `*Tool` definition to `mcp/tools/registry.ts`.
-5. Export the function and definition from `mcp/tools.ts`.
+3. In the same file, export the business function and an `McpToolDefinition`.
+4. Add `mcp/tools/reboot-device.md` with the MCP-facing description.
+5. Export the function and definition from `mcp/tools.ts` when other code or tests should import them directly.
 6. Add a short README entry in the tool table or tool examples.
 7. Run `npm run start:test` for focused contract tests and project entrypoint checks.
 
@@ -259,7 +303,7 @@ Implementation example:
 // mcp/tools/example-tool.ts
 import { z } from "zod";
 import { cacheToDevices, readDeviceCache } from "./common.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type ExampleToolInput = {
   query?: string;
@@ -276,10 +320,7 @@ export async function exampleTool(input: ExampleToolInput = {}) {
   };
 }
 
-export const exampleToolDefinition = defineTool<ExampleToolInput>({
-  name: "example_tool",
-  title: "Example Tool",
-  description: "Describe what the tool does for MCP clients and humans.",
+export const exampleToolDefinition = defineTool<ExampleToolInput>(import.meta.url, {
   inputSchema: {
     query: z.string().optional().describe("Optional filter text.")
   },
@@ -287,16 +328,10 @@ export const exampleToolDefinition = defineTool<ExampleToolInput>({
 });
 ```
 
-Registry export:
+Description file:
 
-```ts
-// mcp/tools/registry.ts
-import { exampleToolDefinition } from "./example-tool.js";
-
-export const toolDefinitions = [
-  // existing tools...
-  exampleToolDefinition
-];
+```text
+Describe what the tool does for MCP clients and humans.
 ```
 
 Barrel export:
@@ -309,6 +344,7 @@ export { exampleTool, exampleToolDefinition } from "./tools/example-tool.js";
 
 Tool responses should be JSON-serializable objects. If a tool can fail in a controlled way, prefer returning `{ ok: false, error: "..." }`; the generic registrar in `mcp/mcp-tools.ts` marks those responses as MCP errors when appropriate.
 
+<a id="device-cache"></a>
 ## Device Cache
 
 Default cache path:
@@ -348,6 +384,7 @@ data/device_notes_cache.json
 
 `list_devices` stays compact: it includes device identity, persistent notes, and known module names, but not function-level feature details. Use `filter_devices` for targeted feature lookup and `discover_commands` for full module/function details. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
 
+<a id="docker"></a>
 ## Docker
 
 Build and export a standalone Docker image archive:
@@ -410,7 +447,7 @@ docker run --rm -i -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data 
 Run the tester UI endpoint in Docker:
 
 ```sh
-docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest ui
+docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -e MICROS_UI_CERT_HOSTS=gateway.local,10.0.1.42 -v micros-mcp-data:/app/data micros-mcp:latest ui
 ```
 
 Set `MICROS_NETWORK_PREFIX` to your LAN `/24` prefix, such as `10.0.1`. In native host mode this prefix is auto-detected; in Docker mode it must be injected because the container usually sees Docker's network interface instead of your LAN interface.
@@ -419,8 +456,12 @@ Persist the device cache:
 
 ```sh
 docker volume create micros-mcp-data
+
 docker run --rm -i -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest mcp
-docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -v micros-mcp-data:/app/data micros-mcp:latest ui
+
+OR
+
+docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -e MICROS_UI_CERT_HOSTS=gateway.local,10.0.1.42 -v micros-mcp-data:/app/data micros-mcp:latest ui
 ```
 
 Image contents:
@@ -434,7 +475,10 @@ Docker network notes:
 - Native mode: the server auto-detects the active local IPv4 prefix and logs it as `native/auto-detected`.
 - Docker mode: pass `MICROS_NETWORK_PREFIX` and the server logs it as `containerized/injected`.
 - If Docker still cannot find devices, confirm the container can route TCP traffic to micrOS devices on port `9008`. Docker Desktop, host firewalls, VPNs, or Wi-Fi client isolation can block this even when the prefix is correct.
-- The UI binds to `0.0.0.0:3333` by default in native and Docker modes. In Docker, `-p 3333:3333` exposes it on the host; use the host's `http://127.0.0.1:3333` or LAN IP from outside the container.
+- The UI binds to `0.0.0.0:3333` with HTTPS in native and Docker modes. Omitting `MICROS_UI_CERT_HOSTS` does not enable HTTP.
+- A container normally sees its own addresses rather than the Docker host's LAN address. Add every host LAN IP or DNS name used by clients to `MICROS_UI_CERT_HOSTS`, such as `gateway.local,10.0.1.42`.
+- Ensure names such as `gateway.local` resolve to the Docker host, then open `https://gateway.local:3333`. Without a matching certificate entry, browsers report a hostname mismatch.
+- Mount `/app/data` as a persistent volume to reuse the generated certificate across container restarts and avoid unnecessary certificate warnings.
 
 Docker MCP client config:
 
@@ -459,6 +503,7 @@ Docker MCP client config:
 }
 ```
 
+<a id="architecture"></a>
 ## Architecture
 
 MCP means Model Context Protocol. It lets a client application start this server, list available tools, and call them with structured JSON arguments.
@@ -483,10 +528,11 @@ Runtime flow:
 
 1. MCP client calls a tool, for example `run_command`.
 2. `mcp/index.ts` starts the MCP server and registers tools through `mcp/mcp-tools.ts`.
-3. `mcp/mcp-tools.ts` registers the collected definitions from `mcp/tools/registry.ts`.
+3. `mcp/mcp-tools.ts` asks `mcp/tool-loader.ts` to discover tool modules from `mcp/tools/`.
 4. The matching file under `mcp/tools/` owns the Zod schema, reads the cache, selects a device, opens a TCP socket if needed, and performs the micrOS operation.
 5. The result is serialized as formatted JSON text and returned to the MCP client.
 
+<a id="requirements"></a>
 ## Requirements
 
 - Node.js 20 or newer.

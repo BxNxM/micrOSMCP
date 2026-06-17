@@ -50,6 +50,7 @@ Environment:
   MICROS_CHAT_CONFIG_PATH           Override data/ui_chat_config.json for the tester web app.
   HOST                              UI bind host. Default: 0.0.0.0.
   PORT                              UI port. Default: 3333.
+  MICROS_UI_CERT_HOSTS              Extra comma-separated IPs/hostnames for the generated UI certificate.
 
 Examples:
   MICROS_DEVICE_CACHE_PATH=/tmp/device_conn_cache.json npm run start
@@ -57,6 +58,7 @@ Examples:
   MICROS_NETWORK_PREFIX=10.0.1 npm run start
   MICROS_CHAT_CONFIG_PATH=/tmp/ui_chat_config.json npm run start -- ui
   HOST=127.0.0.1 PORT=3333 npm run start -- ui
+  MICROS_UI_CERT_HOSTS=gateway.local,10.0.1.42 npm run start -- ui
 
 Build first:
   npm run build

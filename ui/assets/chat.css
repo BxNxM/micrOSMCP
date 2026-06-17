@@ -1,7 +1,6 @@
 .chat-panel {
   display: grid;
   gap: 12px;
-  margin-bottom: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -74,7 +73,8 @@
 .chat-log {
   display: grid;
   gap: 8px;
-  max-height: 260px;
+  min-height: 320px;
+  max-height: min(58vh, 640px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -214,17 +214,33 @@
   color: var(--danger);
 }
 
+.chat-tool-events {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-tool-events:empty {
+  display: none;
+}
+
+.chat-tool-events:not(:empty) {
+  margin-bottom: 10px;
+}
+
 .chat-tool-details {
-  margin-top: 10px;
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
 }
 
 .chat-tool-details summary {
   color: var(--muted);
   cursor: pointer;
+  padding: 8px 10px;
   font-size: 12px;
   font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .chat-tool-details summary:hover {
@@ -234,7 +250,9 @@
 .chat-tool-details pre {
   min-height: 0;
   max-height: 220px;
-  margin-top: 8px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
   font-size: 12px;
 }
 
@@ -284,6 +302,10 @@
 }
 
 @media (max-width: 840px) {
+  .chat-panel {
+    padding: 12px;
+  }
+
   .chat-header,
   .chat-settings {
     grid-template-columns: 1fr;
@@ -295,5 +317,10 @@
 
   [data-chat-send] {
     grid-column: 1 / -1;
+  }
+
+  .chat-log {
+    min-height: 280px;
+    max-height: 48vh;
   }
 }

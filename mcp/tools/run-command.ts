@@ -7,7 +7,7 @@ import {
   selectDevice,
   socketErrorMessage
 } from "./common.js";
-import { defineTool } from "./definition.js";
+import { defineTool } from "../tool-definition.js";
 
 export type RunCommandInput = {
   deviceTag: string;
@@ -69,11 +69,7 @@ export async function runCommand(input: RunCommandInput) {
   }
 }
 
-export const runCommandTool = defineTool<RunCommandInput>({
-  name: "run_command",
-  title: "Run Command",
-  description:
-    "Run a real micrOS command pipeline on one selected embedded device. Use filter_devices first when choosing a target; commands may change device state.",
+export const runCommandTool = defineTool<RunCommandInput>(import.meta.url, {
   inputSchema: {
     deviceTag: z.string().describe("The exact micrOS device UID, FUID, or IP address to target."),
     command: z

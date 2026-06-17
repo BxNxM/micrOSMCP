@@ -7,7 +7,7 @@
     "microsmcp": "dist/mcp/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.mjs && tsc && node scripts/copy-mcp-metadata.mjs",
     "docker:build": "node scripts/docker-build.mjs",
     "dev": "tsx mcp/index.ts",
     "help": "node scripts/start.mjs --help",
