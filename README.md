@@ -60,7 +60,7 @@ The hostname must resolve to the UI host from the client device. Changing this l
 
 Stopping dictation immediately aborts browser speech recognition. A final dictation result, chat send or clear, tab hiding, and page exit also release capture. The recording fallback stops every media track before transcription, so the browser microphone indicator should turn off as soon as capture ends.
 
-The AI chat API key, selected model, and Speak setting are saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse them. The saved key remains server-side: browser configuration responses expose only whether a key exists, never the key itself. Override the config path with `MICROS_CHAT_CONFIG_PATH` if needed. The model dropdown loads available LLM-style OpenAI models using the saved key. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
+The AI chat API key, selected model, and Speak setting are saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse them. The saved key remains server-side: browser configuration responses expose only whether a key exists, never the key itself. Override the config path with `MICROS_CHAT_CONFIG_PATH` if needed. The model dropdown loads available OpenAI Chat Completions models from supported tool-calling families using the saved key; non-chat and specialized model variants are omitted because the tester's MCP bridge requires function tools. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
 
 <a id="mcp-client"></a>
 ## Use With An MCP Client

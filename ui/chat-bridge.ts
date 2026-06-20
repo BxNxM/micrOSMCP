@@ -142,18 +142,34 @@ export async function savePublicChatConfig(input: unknown): Promise<PublicChatCo
   return publicChatConfig(saved);
 }
 
-function isLikelyLlmModel(id: string) {
-  const excludedTokens = ["audio", "image", "realtime", "transcribe", "tts", "whisper"];
+export function isToolCapableChatModel(id: string) {
+  const normalizedId = id.toLowerCase();
+  const excludedTokens = [
+    "audio",
+    "codex",
+    "deep-research",
+    "image",
+    "instruct",
+    "realtime",
+    "search-preview",
+    "transcribe",
+    "tts",
+    "whisper"
+  ];
 
-  if (excludedTokens.some((token) => id.includes(token))) {
+  if (excludedTokens.some((token) => normalizedId.includes(token))) {
     return false;
   }
 
   return (
-    id.startsWith("gpt-") ||
-    /^o\d/.test(id) ||
-    id.startsWith("chatgpt-")
+    /^gpt-(?:5(?:[.-]|$)|4\.1(?:-|$)|4o(?:-|$)|4-turbo(?:-|$))/.test(normalizedId) ||
+    /^o(?:1|3)(?:-|$)/.test(normalizedId) ||
+    /^o4-mini(?:-|$)/.test(normalizedId)
   );
+}
+
+function compatibleSelectedModel(model: string) {
+  return isToolCapableChatModel(model) ? model : defaultChatConfig.model;
 }
 
 function sortModelIds(modelIds: string[]) {
@@ -195,9 +211,11 @@ export async function listOpenAiModels(input: unknown = {}) {
   const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : savedConfig.apiKey;
 
   if (!apiKey) {
+    const selectedModel = compatibleSelectedModel(savedConfig.model);
+
     return {
-      models: [savedConfig.model || defaultChatConfig.model],
-      selectedModel: savedConfig.model || defaultChatConfig.model,
+      models: [selectedModel],
+      selectedModel,
       needsApiKey: true
     };
   }
@@ -217,8 +235,8 @@ export async function listOpenAiModels(input: unknown = {}) {
   const apiModels = Array.isArray(payload?.data)
     ? payload.data.map((model: any) => model?.id).filter((id: unknown): id is string => typeof id === "string")
     : [];
-  const selectedModel = savedConfig.model || defaultChatConfig.model;
-  const models = sortModelIds([...apiModels.filter(isLikelyLlmModel), selectedModel]);
+  const selectedModel = compatibleSelectedModel(savedConfig.model);
+  const models = sortModelIds([...apiModels.filter(isToolCapableChatModel), selectedModel]);
 
   return {
     models,

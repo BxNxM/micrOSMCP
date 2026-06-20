@@ -17,7 +17,7 @@ import {
 import { documentModules } from "../dist/mcp/function-docs.js";
 import { buildCommandModuleHint, checkCommandPipeline, runCommand } from "../dist/mcp/tools/run-command.js";
 import { toolDefinitions } from "../dist/mcp/tool-registry.js";
-import { addTokenUsage } from "../dist/ui/chat-bridge.js";
+import { addTokenUsage, isToolCapableChatModel } from "../dist/ui/chat-bridge.js";
 import {
   accessUrls,
   ensureSelfSignedCertificate,
@@ -247,6 +247,37 @@ function testChatConfigPersistence() {
   }
 }
 
+function testChatModelCompatibilityFilter() {
+  for (const model of [
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini-2025-04-14",
+    "gpt-4o",
+    "gpt-4-turbo",
+    "o1",
+    "o3-mini",
+    "o4-mini"
+  ]) {
+    assert.equal(isToolCapableChatModel(model), true, `${model} should be available for MCP tool chat`);
+  }
+
+  for (const model of [
+    "chatgpt-4o-latest",
+    "gpt-3.5-turbo",
+    "gpt-4o-audio-preview",
+    "gpt-4o-realtime-preview",
+    "gpt-4o-search-preview",
+    "gpt-5-codex",
+    "gpt-image-1",
+    "o3-deep-research",
+    "text-embedding-3-small",
+    "whisper-1"
+  ]) {
+    assert.equal(isToolCapableChatModel(model), false, `${model} should not be available for MCP tool chat`);
+  }
+}
+
 async function testUiRequestLimit() {
   const oversized = Readable.from([Buffer.from('{"value":"'), Buffer.alloc(20, "x"), Buffer.from('"}')]);
   oversized.headers = {};
@@ -469,7 +500,7 @@ function testToolRegistry() {
   const searchTool = toolDefinitions.find((tool) => tool.name === "search_devices");
   assert.ok(searchTool && "fuzziness" in searchTool.inputSchema, "search_devices should expose fuzziness");
   assert.equal(searchTool.title, "Search Devices");
-  assert.match(searchTool.description, /before run_command/, "tool guidance should establish the command lookup workflow");
+  assert.match(searchTool.description, /before `?run_command`?/, "tool guidance should establish the command lookup workflow");
   assert.equal(searchTool.inputSchema.fuzziness.safeParse(0).success, true);
   assert.equal(searchTool.inputSchema.fuzziness.safeParse(2).success, true);
   assert.equal(searchTool.inputSchema.fuzziness.safeParse(3).success, false);
@@ -1316,6 +1347,7 @@ testDockerExcludesRuntimeData();
 testCliHelpEntrypoints();
 testNetworkPrefixEnvironmentOverride();
 testChatConfigPersistence();
+testChatModelCompatibilityFilter();
 await testUiRequestLimit();
 testUiAccessUrls();
 testUiTabStructure();
