@@ -1,1 +1,1 @@
-Return a compact cached device inventory with identity, persistent note, and known module names only.
+List the cached device inventory without checking the network. Returns each device's UID, name, address, persistent note, and cached module names, but not function signatures or live status. Use for a quick overview; use `search_devices` to select a target or inspect capabilities.

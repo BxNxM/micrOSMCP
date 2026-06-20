@@ -9,43 +9,29 @@ export type Device = {
   uid: string;
   ip: string;
   port: number;
-  fuid: string;
+  deviceName: string;
   status?: DeviceStatus | "unknown";
   deviceNote?: string;
   features?: CachedDeviceFeatures;
 };
 
-export type DeviceCache = Record<string, [string, number, string]>;
-
-export type DiscoveredModuleFunction = {
-  name: string;
-  parameters: string[];
-  signature: string;
+export type DeviceConnection = {
+  ip: string;
+  port: number;
+  deviceName: string;
 };
+
+export type DeviceCache = Record<string, DeviceConnection>;
 
 export type DiscoveredModule = {
   name: string;
-  helpCommand: string;
-  rawHelp: string[];
-  functions: DiscoveredModuleFunction[];
-};
-
-export type DiscoveredCommand = {
-  module: string;
-  function: string;
-  parameters: string[];
-  command: string;
-  signature: string;
+  functions: string[];
 };
 
 export type CachedDeviceFeatures = {
-  deviceName: string;
   deviceNote: string;
   discoveredAt: string | null;
-  modulesCommand: string;
-  rawModules: string[];
   modules: DiscoveredModule[];
-  commands: DiscoveredCommand[];
 };
 
 export type DeviceFeatureCache = Record<string, CachedDeviceFeatures>;
@@ -79,8 +65,8 @@ export const deviceNotesCachePath =
 export const defaultPort = 9008;
 
 const defaultCache: DeviceCache = {
-  __devuid__: ["192.168.4.1", defaultPort, "__device_on_AP__"],
-  __localhost__: ["127.0.0.1", defaultPort, "__simulator__"]
+  __devuid__: { ip: "192.168.4.1", port: defaultPort, deviceName: "__device_on_AP__" },
+  __localhost__: { ip: "127.0.0.1", port: defaultPort, deviceName: "__simulator__" }
 };
 let attemptedAutoDiscover = false;
 
@@ -92,13 +78,13 @@ function normalizeDeviceCache(input: unknown): DeviceCache {
   const normalized: DeviceCache = {};
 
   for (const [uid, value] of Object.entries(input)) {
-    if (!Array.isArray(value) || value.length < 3) {
-      continue;
-    }
+    const legacy = Array.isArray(value) && value.length >= 3 ? value : null;
+    const entry = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    const ip = legacy?.[0] ?? entry?.ip;
+    const port = legacy?.[1] ?? entry?.port;
+    const deviceName = legacy?.[2] ?? entry?.deviceName;
 
-    const [ip, port, fuid] = value;
-
-    if (typeof uid !== "string" || typeof ip !== "string" || typeof fuid !== "string") {
+    if (typeof uid !== "string" || typeof ip !== "string" || typeof deviceName !== "string") {
       continue;
     }
 
@@ -108,25 +94,17 @@ function normalizeDeviceCache(input: unknown): DeviceCache {
       continue;
     }
 
-    normalized[uid] = [ip, numericPort, fuid];
+    normalized[uid] = { ip, port: numericPort, deviceName };
   }
 
   return normalized;
 }
 
-function stringArray(input: unknown) {
-  return Array.isArray(input) ? input.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-export function emptyCachedDeviceFeatures(deviceNote = "", deviceName = ""): CachedDeviceFeatures {
+export function emptyCachedDeviceFeatures(deviceNote = ""): CachedDeviceFeatures {
   return {
-    deviceName,
     deviceNote,
     discoveredAt: null,
-    modulesCommand: "modules",
-    rawModules: [],
-    modules: [],
-    commands: []
+    modules: []
   };
 }
 
@@ -143,12 +121,9 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
     }
 
     const entry = value as Record<string, unknown>;
-    const deviceName = typeof entry.deviceName === "string" ? entry.deviceName : "";
     const deviceNote = typeof entry.deviceNote === "string" ? entry.deviceNote : "";
     const discoveredAt = typeof entry.discoveredAt === "string" ? entry.discoveredAt : null;
-    const modulesCommand = typeof entry.modulesCommand === "string" ? entry.modulesCommand : "modules";
-
-    const modules = Array.isArray(entry.modules)
+    const parsedModules = Array.isArray(entry.modules)
       ? entry.modules.flatMap((moduleEntry): DiscoveredModule[] => {
           if (!moduleEntry || typeof moduleEntry !== "object" || Array.isArray(moduleEntry)) {
             return [];
@@ -156,83 +131,55 @@ function normalizeDeviceFeatureCache(input: unknown): DeviceFeatureCache {
 
           const module = moduleEntry as Record<string, unknown>;
           const name = typeof module.name === "string" ? module.name : null;
-          const helpCommand = typeof module.helpCommand === "string" ? module.helpCommand : null;
 
-          if (!name || !helpCommand) {
+          if (!name) {
             return [];
           }
 
           const functions = Array.isArray(module.functions)
-            ? module.functions.flatMap((fnEntry): DiscoveredModuleFunction[] => {
-                if (!fnEntry || typeof fnEntry !== "object" || Array.isArray(fnEntry)) {
-                  return [];
+            ? module.functions.flatMap((fnEntry): string[] => {
+                if (typeof fnEntry === "string" && fnEntry.trim()) {
+                  return [fnEntry.trim()];
                 }
 
-                const fn = fnEntry as Record<string, unknown>;
-                const fnName = typeof fn.name === "string" ? fn.name : null;
-                const signature = typeof fn.signature === "string" ? fn.signature : null;
-
-                if (!fnName || !signature) {
-                  return [];
+                if (fnEntry && typeof fnEntry === "object" && !Array.isArray(fnEntry)) {
+                  const signature = (fnEntry as Record<string, unknown>).signature;
+                  return typeof signature === "string" && signature.trim() ? [signature.trim()] : [];
                 }
 
-                return [
-                  {
-                    name: fnName,
-                    parameters: stringArray(fn.parameters),
-                    signature
-                  }
-                ];
+                return [];
               })
             : [];
 
-          return [
-            {
-              name,
-              helpCommand,
-              rawHelp: stringArray(module.rawHelp),
-              functions
-            }
-          ];
+          return [{ name, functions }];
         })
       : [];
+    const moduleFunctions = new Map(parsedModules.map((module) => [module.name, new Set(module.functions)]));
 
-    const commands = Array.isArray(entry.commands)
-      ? entry.commands.flatMap((commandEntry): DiscoveredCommand[] => {
-          if (!commandEntry || typeof commandEntry !== "object" || Array.isArray(commandEntry)) {
-            return [];
-          }
+    if (Array.isArray(entry.commands)) {
+      for (const commandEntry of entry.commands) {
+        if (!commandEntry || typeof commandEntry !== "object" || Array.isArray(commandEntry)) {
+          continue;
+        }
 
-          const command = commandEntry as Record<string, unknown>;
-          const moduleName = typeof command.module === "string" ? command.module : null;
-          const functionName = typeof command.function === "string" ? command.function : null;
-          const commandText = typeof command.command === "string" ? command.command : null;
-          const signature = typeof command.signature === "string" ? command.signature : null;
+        const command = commandEntry as Record<string, unknown>;
+        const moduleName = typeof command.module === "string" ? command.module : null;
+        const signature = typeof command.signature === "string" ? command.signature.trim() : "";
 
-          if (!moduleName || !functionName || !commandText || !signature) {
-            return [];
-          }
+        if (moduleName && signature) {
+          const functions = moduleFunctions.get(moduleName) ?? new Set<string>();
+          functions.add(signature);
+          moduleFunctions.set(moduleName, functions);
+        }
+      }
+    }
 
-          return [
-            {
-              module: moduleName,
-              function: functionName,
-              parameters: stringArray(command.parameters),
-              command: commandText,
-              signature
-            }
-          ];
-        })
-      : [];
+    const modules = [...moduleFunctions].map(([name, functions]) => ({ name, functions: [...functions] }));
 
     normalized[uid] = {
-      deviceName,
       deviceNote,
       discoveredAt,
-      modulesCommand,
-      rawModules: stringArray(entry.rawModules),
-      modules,
-      commands
+      modules
     };
   }
 
@@ -265,32 +212,32 @@ function stripDeviceNotesFromFeatureCache(cache: DeviceFeatureCache) {
 }
 
 export function cacheToDevices(cache: DeviceCache): Device[] {
-  return Object.entries(cache).map(([uid, [ip, port, fuid]]) => ({
+  return Object.entries(cache).map(([uid, { ip, port, deviceName }]) => ({
     uid,
     ip,
     port,
-    fuid
+    deviceName
   }));
 }
 
-export function deviceNoteKey(device: Pick<Device, "uid" | "fuid">) {
-  return device.fuid || device.uid;
+export function deviceNoteKey(device: Pick<Device, "uid" | "deviceName">) {
+  return device.deviceName || device.uid;
 }
 
-function deviceNoteKeyForUid(uid: string, cache: DeviceCache) {
-  const fuid = cache[uid]?.[2];
-  return fuid || uid;
+function deviceNameForUid(uid: string, cache: DeviceCache) {
+  const deviceName = cache[uid]?.deviceName;
+  return deviceName || uid;
 }
 
 function notesByUid(notesCache: DeviceNotesCache, deviceCache: DeviceCache) {
   const notes: DeviceNotesCache = {};
   const knownNoteKeys = new Set<string>();
 
-  for (const [uid, [_ip, _port, fuid]] of Object.entries(deviceCache)) {
+  for (const [uid, { deviceName }] of Object.entries(deviceCache)) {
     knownNoteKeys.add(uid);
-    knownNoteKeys.add(fuid);
+    knownNoteKeys.add(deviceName);
 
-    const note = notesCache[fuid] ?? notesCache[uid];
+    const note = notesCache[deviceName] ?? notesCache[uid];
 
     if (note !== undefined) {
       notes[uid] = note;
@@ -319,16 +266,14 @@ function featuresWithDeviceContext(
   for (const [uid, features] of Object.entries(featureCache)) {
     withContext[uid] = {
       ...features,
-      deviceName: deviceNoteKeyForUid(uid, deviceCache),
       deviceNote: deviceNotesByUid[uid] ?? features.deviceNote
     };
   }
 
   for (const [uid, note] of Object.entries(deviceNotesByUid)) {
-    withContext[uid] = withContext[uid] ?? emptyCachedDeviceFeatures("", deviceNoteKeyForUid(uid, deviceCache));
+    withContext[uid] = withContext[uid] ?? emptyCachedDeviceFeatures();
     withContext[uid] = {
       ...withContext[uid],
-      deviceName: deviceNoteKeyForUid(uid, deviceCache),
       deviceNote: note
     };
   }
@@ -367,12 +312,104 @@ export function deviceSearchFields(device: Device) {
 }
 
 export function deviceIdentityFields(device: Device) {
-  return [device.uid, device.ip, String(device.port), device.fuid];
+  return [device.uid, device.ip, String(device.port), device.deviceName];
 }
 
-export function fieldsMatchQuery(fields: string[], query: string) {
+function fuzzyTokens(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+export type SearchFuzziness = 0 | 1 | 2;
+
+function fuzzyDistanceLimit(query: string, fuzziness: SearchFuzziness) {
+  if (fuzziness === 0) {
+    return 0;
+  }
+
+  if (fuzziness === 1) {
+    return query.length >= 8 ? 2 : query.length >= 4 ? 1 : 0;
+  }
+
+  return query.length >= 8 ? 3 : query.length >= 5 ? 2 : query.length >= 3 ? 1 : 0;
+}
+
+function damerauLevenshteinWithin(left: string, right: string, limit: number) {
+  if (Math.abs(left.length - right.length) > limit) {
+    return false;
+  }
+
+  const rows = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0));
+
+  for (let row = 0; row <= left.length; row += 1) {
+    rows[row][0] = row;
+  }
+
+  for (let column = 0; column <= right.length; column += 1) {
+    rows[0][column] = column;
+  }
+
+  for (let row = 1; row <= left.length; row += 1) {
+    let rowMinimum = limit + 1;
+
+    for (let column = 1; column <= right.length; column += 1) {
+      const substitutionCost = left[row - 1] === right[column - 1] ? 0 : 1;
+      rows[row][column] = Math.min(
+        rows[row - 1][column] + 1,
+        rows[row][column - 1] + 1,
+        rows[row - 1][column - 1] + substitutionCost
+      );
+
+      if (
+        row > 1 &&
+        column > 1 &&
+        left[row - 1] === right[column - 2] &&
+        left[row - 2] === right[column - 1]
+      ) {
+        rows[row][column] = Math.min(rows[row][column], rows[row - 2][column - 2] + 1);
+      }
+
+      rowMinimum = Math.min(rowMinimum, rows[row][column]);
+    }
+
+    if (rowMinimum > limit) {
+      return false;
+    }
+  }
+
+  return rows[left.length][right.length] <= limit;
+}
+
+export function fieldsMatchQuery(fields: string[], query: string, fuzziness: SearchFuzziness = 1) {
   const normalized = query.trim().toLowerCase();
-  return normalized.length > 0 && fields.some((field) => field.toLowerCase().includes(normalized));
+
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  if (fields.some((field) => field.toLowerCase().includes(normalized))) {
+    return true;
+  }
+
+  const queryTokens = fuzzyTokens(query);
+  const fuzzyQuery = /^[a-z0-9]+$/i.test(query.trim())
+    ? normalized
+    : queryTokens.length === 1
+      ? queryTokens[0]
+      : null;
+
+  return (
+    fuzzyQuery !== null &&
+    fields.some((field) => {
+      const candidates = [field.toLowerCase(), ...fuzzyTokens(field)];
+      const limit = fuzzyDistanceLimit(fuzzyQuery, fuzziness);
+
+      return limit > 0 && candidates.some((candidate) => damerauLevenshteinWithin(fuzzyQuery, candidate, limit));
+    })
+  );
 }
 
 export function deviceFeatureSearchFields(features?: CachedDeviceFeatures) {
@@ -382,85 +419,51 @@ export function deviceFeatureSearchFields(features?: CachedDeviceFeatures) {
 
   return [
     features.deviceNote,
-    features.deviceName,
     ...(features.discoveredAt ? [features.discoveredAt] : []),
-    features.modulesCommand,
-    ...features.rawModules,
-    ...features.modules.flatMap((module) => [
-      module.name,
-      module.helpCommand,
-      ...module.rawHelp,
-      ...module.functions.flatMap((fn) => [fn.name, fn.signature, ...fn.parameters])
-    ]),
-    ...features.commands.flatMap((command) => [
-      command.module,
-      command.function,
-      command.command,
-      command.signature,
-      ...command.parameters
-    ])
+    ...features.modules.flatMap((module) => [module.name, ...module.functions, ...module.functions.map((fn) => `${module.name} ${fn}`)])
   ];
 }
 
 function moduleSearchFields(module: DiscoveredModule) {
-  return [
-    module.name,
-    module.helpCommand,
-    ...module.rawHelp,
-    ...module.functions.flatMap((fn) => [fn.name, fn.signature, ...fn.parameters])
-  ];
+  return [module.name, ...module.functions, ...module.functions.map((fn) => `${module.name} ${fn}`)];
 }
 
-function functionSearchFields(fn: DiscoveredModuleFunction) {
-  return [fn.name, fn.signature, ...fn.parameters];
-}
+export function pruneDeviceFeaturesForQuery(
+  features: CachedDeviceFeatures | undefined,
+  searchTerms: string | string[],
+  fuzziness: SearchFuzziness = 1
+) {
+  const terms = (Array.isArray(searchTerms) ? searchTerms : [searchTerms]).map((term) => term.trim()).filter(Boolean);
 
-function commandSearchFields(command: DiscoveredCommand) {
-  return [command.module, command.function, command.command, command.signature, ...command.parameters];
-}
-
-export function pruneDeviceFeaturesForQuery(features: CachedDeviceFeatures | undefined, query: string) {
-  if (!features || query.trim().length === 0) {
+  if (!features || terms.length === 0) {
     return features;
   }
 
   const modules = features.modules.flatMap((module): DiscoveredModule[] => {
-    if (!fieldsMatchQuery(moduleSearchFields(module), query)) {
+    if (!terms.some((term) => fieldsMatchQuery(moduleSearchFields(module), term, fuzziness))) {
       return [];
     }
 
-    const moduleNameMatches = fieldsMatchQuery([module.name, module.helpCommand, ...module.rawHelp], query);
-    const functions = moduleNameMatches
-      ? module.functions
-      : module.functions.filter((fn) => fieldsMatchQuery(functionSearchFields(fn), query));
-
-    return [
-      {
-        ...module,
-        rawHelp: moduleNameMatches
-          ? module.rawHelp
-          : module.rawHelp.filter((line) => fieldsMatchQuery([line], query)),
-        functions
-      }
-    ];
+    return [module];
   });
-  const moduleNames = new Set(modules.map((module) => module.name));
-  const commands = features.commands.filter(
-    (command) => moduleNames.has(command.module) || fieldsMatchQuery(commandSearchFields(command), query)
-  );
-
   return {
     ...features,
-    rawModules: modules.map((module) => module.name),
-    modules,
-    commands
+    modules
   };
 }
 
 async function readRawDeviceCache(): Promise<DeviceCache | null> {
   try {
     const raw = await readFile(deviceCachePath, "utf8");
-    return { ...defaultCache, ...normalizeDeviceCache(JSON.parse(raw)) };
+    const parsed = JSON.parse(raw);
+    const cache = { ...defaultCache, ...normalizeDeviceCache(parsed) };
+    const entries = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.values(parsed) : [];
+
+    if (entries.some((entry) => Array.isArray(entry))) {
+      await saveDeviceCache(cache);
+    }
+
+    return cache;
   } catch {
     return null;
   }
@@ -477,7 +480,22 @@ export async function readDeviceFeatureCache(): Promise<DeviceFeatureCache> {
 
   try {
     const raw = await readFile(deviceFeatureCachePath, "utf8");
-    return featuresWithDeviceContext(normalizeDeviceFeatureCache(JSON.parse(raw)), notesCache, deviceCache);
+    const parsed = JSON.parse(raw);
+    const features = featuresWithDeviceContext(normalizeDeviceFeatureCache(parsed), notesCache, deviceCache);
+    const entries = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? Object.values(parsed) : [];
+    const needsMigration = entries.some(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        ["deviceName", "deviceNote", "modulesCommand", "rawModules", "commands"].some((key) => key in entry)
+    );
+
+    if (needsMigration) {
+      await saveDeviceFeatureCache(features);
+    }
+
+    return features;
   } catch {
     return featuresWithDeviceContext({}, notesCache, deviceCache);
   }
@@ -488,13 +506,8 @@ export async function saveDeviceFeatureCache(cache: DeviceFeatureCache) {
   const deviceCache = await readDeviceCacheWithoutAutoDiscover();
 
   for (const [uid, features] of Object.entries(cache)) {
-    cache[uid] = {
-      ...features,
-      deviceName: deviceNoteKeyForUid(uid, deviceCache)
-    };
-
     if (features.deviceNote.trim().length > 0) {
-      const noteKey = deviceNoteKeyForUid(uid, deviceCache);
+      const noteKey = deviceNameForUid(uid, deviceCache);
       notesCache[noteKey] = features.deviceNote;
       delete notesCache[uid];
     }
@@ -557,7 +570,7 @@ async function readDeviceCacheWithoutAutoDiscover(): Promise<DeviceCache> {
 
 export function selectDevice(devices: Device[], deviceTag: string) {
   return devices.find(
-    (device) => device.uid === deviceTag || device.fuid === deviceTag || device.ip === deviceTag
+    (device) => device.uid === deviceTag || device.deviceName === deviceTag || device.ip === deviceTag
   );
 }
 
@@ -576,7 +589,7 @@ export function findDevices(devices: Device[], deviceTag?: string) {
 
   const normalized = query.toLowerCase();
   return devices.filter((device) =>
-    [device.uid, device.fuid, device.ip].some((field) => field.toLowerCase().includes(normalized))
+    [device.uid, device.deviceName, device.ip].some((field) => field.toLowerCase().includes(normalized))
   );
 }
 
@@ -694,6 +707,12 @@ function cleanOutputLines(lines: string[]) {
 
 export function parseModules(lines: string[]) {
   const text = cleanOutputLines(lines).join("\n");
+  const jsonModules = parseJsonStringArray(text);
+
+  if (jsonModules) {
+    return jsonModules;
+  }
+
   const bracketMatch = text.match(/\[(.*)\]/s);
 
   if (bracketMatch) {
@@ -709,6 +728,17 @@ export function parseModules(lines: string[]) {
     .filter((entry) => /^[A-Za-z_][\w-]*$/.test(entry));
 }
 
+function parseJsonStringArray(text: string) {
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")
+      ? parsed.map((entry) => entry.trim()).filter(Boolean)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseHelpLine(line: string) {
   const cleaned = line.trim().replace(/,$/, "");
 
@@ -716,29 +746,28 @@ function parseHelpLine(line: string) {
     return null;
   }
 
-  const [name, ...parameters] = cleaned.split(/\s+/);
+  const [name] = cleaned.split(/\s+/);
 
   if (!name || !/^[A-Za-z_]\w*$/.test(name)) {
     return null;
   }
 
-  return {
-    name,
-    parameters,
-    signature: cleaned
-  };
+  return cleaned;
 }
 
 export function parseModuleHelp(lines: string[]) {
-  return cleanOutputLines(lines)
+  const cleaned = cleanOutputLines(lines);
+  const jsonFunctions = parseJsonStringArray(cleaned.join("\n"));
+
+  return (jsonFunctions ?? cleaned)
     .map(parseHelpLine)
-    .filter((entry): entry is NonNullable<ReturnType<typeof parseHelpLine>> => entry !== null);
+    .filter((entry): entry is string => entry !== null);
 }
 
 function promptMatchesDevice(prompt: string, device: Device) {
   const promptHost = prompt.replace("$", "").trim();
-  const fuidHost = device.fuid.split(".")[0];
-  return device.fuid.includes("__simulator__") || promptHost === fuidHost;
+  const deviceNameHost = device.deviceName.split(".")[0];
+  return device.deviceName.includes("__simulator__") || promptHost === deviceNameHost;
 }
 
 export async function mapWithConcurrency<T, R>(items: T[], concurrency: number, task: (item: T) => Promise<R>) {
@@ -784,7 +813,7 @@ export class MicrOSSocketClient {
     }
 
     if (this.validatePrompt && !promptMatchesDevice(this.prompt, this.device)) {
-      throw new Error(`Prompt mismatch: device ${this.device.fuid}, prompt ${this.prompt}`);
+      throw new Error(`Prompt mismatch: device ${this.device.deviceName}, prompt ${this.prompt}`);
     }
 
     if (this.password && promptData.includes("[password]")) {
@@ -795,7 +824,7 @@ export class MicrOSSocketClient {
     }
 
     if (this.verbose) {
-      console.error(`[micrOS] connected ${this.device.fuid} at ${this.device.ip}:${this.device.port}`);
+      console.error(`[micrOS] connected ${this.device.deviceName} at ${this.device.ip}:${this.device.port}`);
     }
   }
 
@@ -936,7 +965,7 @@ async function handshakeDevice(ip: string, port = defaultPort, timeoutSeconds = 
     uid: ip,
     ip,
     port,
-    fuid: ip
+    deviceName: ip
   };
   const client = new MicrOSSocketClient(device, timeoutSeconds, undefined, false, false);
 
@@ -953,7 +982,7 @@ async function handshakeDevice(ip: string, port = defaultPort, timeoutSeconds = 
       uid: match[2],
       ip,
       port,
-      fuid: match[1]
+      deviceName: match[1]
     };
   } catch {
     return null;
@@ -981,7 +1010,11 @@ export async function discoverAndSaveDevices(input: DiscoverDevicesOptions = {})
   const nextCache: DeviceCache = { ...existing };
 
   for (const device of discovered) {
-    nextCache[device.uid] = [device.ip, device.port, device.fuid];
+    nextCache[device.uid] = {
+      ip: device.ip,
+      port: device.port,
+      deviceName: device.deviceName
+    };
   }
 
   await saveDeviceCache(nextCache);

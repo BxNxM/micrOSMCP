@@ -1,1 +1,0 @@
-Primary device selection tool: filter cached micrOS devices by name, UID, IP, port, note, module, function, command, or cached feature text. Feature-query results include only relevant feature modules to keep context compact. Query should contain a single word, but you can run the tool multiple times for searching.

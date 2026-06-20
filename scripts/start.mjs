@@ -46,8 +46,11 @@ Environment:
   MICROS_DEVICE_CACHE_PATH          Override data/device_conn_cache.json.
   MICROS_DEVICE_FEATURE_CACHE_PATH  Override data/device_feature_cache.json.
   MICROS_DEVICE_NOTES_CACHE_PATH    Override data/device_notes_cache.json.
+  MICROS_FUNCTION_MANUAL_PATH       Override data/sfuncman.json.
   MICROS_NETWORK_PREFIX             Override automatic /24 discovery prefix, e.g. 10.0.1.
+  MICROS_INITIALIZE_ON_START        Set to 0 to skip startup device discovery and feature scanning.
   MICROS_CHAT_CONFIG_PATH           Override data/ui_chat_config.json for the tester web app.
+  MICROS_UI_MAX_BODY_BYTES          Maximum tester UI JSON request size. Default: 12582912.
   HOST                              UI bind host. Default: 0.0.0.0.
   PORT                              UI port. Default: 3333.
   MICROS_UI_CERT_HOSTS              Extra comma-separated IPs/hostnames for the generated UI certificate.
@@ -56,6 +59,7 @@ Examples:
   MICROS_DEVICE_CACHE_PATH=/tmp/device_conn_cache.json npm run start
   MICROS_DEVICE_NOTES_CACHE_PATH=/tmp/device_notes_cache.json npm run start
   MICROS_NETWORK_PREFIX=10.0.1 npm run start
+  MICROS_INITIALIZE_ON_START=0 npm run start:mcp
   MICROS_CHAT_CONFIG_PATH=/tmp/ui_chat_config.json npm run start -- ui
   HOST=127.0.0.1 PORT=3333 npm run start -- ui
   MICROS_UI_CERT_HOSTS=gateway.local,10.0.1.42 npm run start -- ui

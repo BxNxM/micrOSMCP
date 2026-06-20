@@ -10,7 +10,13 @@ import { extname, isAbsolute, join, normalize, relative, resolve } from "node:pa
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
-import { createChatReply, listOpenAiModels, readChatConfig, saveChatConfig, transcribeAudio } from "./chat-bridge.js";
+import {
+  createChatReply,
+  listOpenAiModels,
+  readPublicChatConfig,
+  savePublicChatConfig,
+  transcribeAudio
+} from "./chat-bridge.js";
 
 const preferredPort = Number(process.env.PORT ?? 3333);
 const host = process.env.HOST ?? "0.0.0.0";
@@ -19,6 +25,10 @@ const uiAssetsDir = fileURLToPath(new URL("../../ui/assets", import.meta.url));
 const logoPath = fileURLToPath(new URL("../../media/logo.png", import.meta.url));
 const mcpServerPath = fileURLToPath(new URL("../mcp/index.js", import.meta.url));
 const runFile = promisify(execFile);
+const configuredBodyLimit = Number(process.env.MICROS_UI_MAX_BODY_BYTES ?? 12 * 1024 * 1024);
+const maxJsonBodyBytes = Number.isFinite(configuredBodyLimit) && configuredBodyLimit > 0
+  ? configuredBodyLimit
+  : 12 * 1024 * 1024;
 let client: Client | null = null;
 
 const contentTypes: Record<string, string> = {
@@ -30,11 +40,35 @@ const contentTypes: Record<string, string> = {
   ".svg": "image/svg+xml"
 };
 
-async function readJsonBody(request: IncomingMessage) {
+class HttpRequestError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+export async function readJsonBody(request: IncomingMessage, limit = maxJsonBodyBytes) {
   const chunks: Buffer[] = [];
+  let size = 0;
+
+  const contentLength = Number(request.headers?.["content-length"] ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > limit) {
+    request.resume?.();
+    throw new HttpRequestError(413, `Request body exceeds the ${limit}-byte limit.`);
+  }
 
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+
+    if (size > limit) {
+      request.resume?.();
+      throw new HttpRequestError(413, `Request body exceeds the ${limit}-byte limit.`);
+    }
+
+    chunks.push(bytes);
   }
 
   const raw = Buffer.concat(chunks).toString("utf8");
@@ -51,6 +85,7 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown) {
 function sendError(response: ServerResponse, statusCode: number, message: string) {
   sendJson(response, statusCode, { error: message });
 }
+
 
 function localIpv4Addresses() {
   const addresses: string[] = [];
@@ -240,12 +275,12 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
     }
 
     if (request.method === "GET" && url.pathname === "/api/chat-config") {
-      sendJson(response, 200, await readChatConfig());
+      sendJson(response, 200, await readPublicChatConfig());
       return;
     }
 
     if ((request.method === "POST" || request.method === "PUT") && url.pathname === "/api/chat-config") {
-      sendJson(response, 200, await saveChatConfig(await readJsonBody(request)));
+      sendJson(response, 200, await savePublicChatConfig(await readJsonBody(request)));
       return;
     }
 
@@ -266,7 +301,8 @@ const handleRequest = async (request: IncomingMessage, response: ServerResponse)
 
     sendError(response, 405, "Method not allowed");
   } catch (error) {
-    sendError(response, 500, error instanceof Error ? error.message : "Unknown error");
+    const statusCode = error instanceof HttpRequestError ? error.statusCode : 500;
+    sendError(response, statusCode, error instanceof Error ? error.message : "Unknown error");
   }
 };
 

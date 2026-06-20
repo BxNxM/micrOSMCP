@@ -24,7 +24,8 @@ function registerMcpTool(server: McpServer, tool: McpToolDefinition) {
     {
       title: tool.title,
       description: tool.description,
-      inputSchema: tool.inputSchema
+      inputSchema: tool.inputSchema,
+      _meta: tool._meta
     },
     async (args) => {
       const result = await tool.handler(args);

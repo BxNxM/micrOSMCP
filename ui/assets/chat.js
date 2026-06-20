@@ -14,7 +14,7 @@ export function toolEventTitle(event = {}) {
       : typeof rawCommand === "string"
         ? rawCommand
         : "";
-  } else if (name === "filter_devices" && typeof event.arguments?.query === "string") {
+  } else if (name === "search_devices" && typeof event.arguments?.query === "string") {
     input = event.arguments.query;
   }
 
@@ -23,6 +23,18 @@ export function toolEventTitle(event = {}) {
 
 export function shouldSubmitChatOnKeyDown(event = {}) {
   return event.key === "Enter" && !event.shiftKey && !event.isComposing;
+}
+
+export function tokenUsageLabel(usage) {
+  const total = Number(usage?.totalTokens);
+  const input = Number(usage?.inputTokens);
+  const output = Number(usage?.outputTokens);
+
+  if (!Number.isFinite(total) || total <= 0) {
+    return "";
+  }
+
+  return `${total} tokens · ${Number.isFinite(input) ? input : 0} in · ${Number.isFinite(output) ? output : 0} out`;
 }
 
 function appendInlineMarkdown(parent, text) {
@@ -392,6 +404,33 @@ export function audioRecordingSupport({
   };
 }
 
+export function stopMediaStreamTracks(stream) {
+  for (const track of stream?.getTracks?.() ?? []) {
+    try {
+      track.stop();
+    } catch {
+      // Continue releasing the remaining tracks.
+    }
+  }
+}
+
+export function stopSpeechRecognition(recognition, abort = true) {
+  if (!recognition) {
+    return;
+  }
+
+  try {
+    if (abort && typeof recognition.abort === "function") {
+      recognition.abort();
+      return;
+    }
+
+    recognition.stop?.();
+  } catch {
+    // Capture may already have ended between the UI event and cleanup.
+  }
+}
+
 function preferredAudioMimeType(MediaRecorder) {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
   return candidates.find((type) => MediaRecorder?.isTypeSupported?.(type)) ?? "";
@@ -445,9 +484,14 @@ export function initChat({ mount, onToolEvent } = {}) {
   let mediaRecorder = null;
   let mediaStream = null;
   let audioChunks = [];
+  let discardRecording = false;
+  let recordingStarting = false;
+  let recordingStopping = false;
+  let captureVersion = 0;
   let voiceMode = "none";
   let saveTimer = null;
   let chatVersion = 0;
+  let hasSavedApiKey = false;
 
   function renderChatMessageBody(body, role, text) {
     body.textContent = "";
@@ -484,6 +528,20 @@ export function initChat({ mount, onToolEvent } = {}) {
     }
 
     message.textContent = text || "No text response.";
+  }
+
+  function setTokenUsageFooter(message, usage) {
+    message.querySelector(".chat-token-usage")?.remove();
+    const label = tokenUsageLabel(usage);
+
+    if (!label) {
+      return;
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "chat-token-usage";
+    footer.textContent = label;
+    message.append(footer);
   }
 
   function appendToolDetails(message, event) {
@@ -527,16 +585,10 @@ export function initChat({ mount, onToolEvent } = {}) {
     chatInput.value = "";
     stopSpeaking();
 
-    if (isListening) {
-      if (recognition) {
-        recognition.stop();
-      } else if (mediaRecorder?.state === "recording") {
-        mediaRecorder.stop();
-      }
-    }
+    stopVoiceCapture({ discardAudio: true });
 
     sendChat.disabled = false;
-    listenButton.disabled = voiceMode === "none";
+    listenButton.disabled = voiceMode === "none" || recordingStarting || recordingStopping;
     listenStatus.textContent = listenButton.disabled ? listenStatus.textContent : "";
     appendChatMessage("assistant", "Ready.");
     chatInput.focus();
@@ -575,7 +627,9 @@ export function initChat({ mount, onToolEvent } = {}) {
       throw new Error(payload.error || "Failed to load chat config.");
     }
 
-    apiKeyInput.value = payload.apiKey ?? "";
+    apiKeyInput.value = "";
+    hasSavedApiKey = Boolean(payload.hasApiKey);
+    apiKeyInput.placeholder = hasSavedApiKey ? "Saved on server (enter to replace)" : "OpenAI API key";
     speakReplies.checked = Boolean(payload.speakReplies);
     setModelOptions([payload.model || "gpt-4.1-mini"], payload.model || "gpt-4.1-mini");
   }
@@ -593,10 +647,15 @@ export function initChat({ mount, onToolEvent } = {}) {
       })
     });
 
+    const payload = await response.json().catch(() => ({}));
+
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
       appendChatMessage("error", payload.error || "Failed to save chat config.");
+      return;
     }
+
+    hasSavedApiKey = Boolean(payload.hasApiKey);
+    apiKeyInput.placeholder = hasSavedApiKey ? "Saved on server (enter to replace)" : "OpenAI API key";
   }
 
   function queueSaveChatConfig() {
@@ -629,20 +688,20 @@ export function initChat({ mount, onToolEvent } = {}) {
     refreshModelsButton.disabled = true;
 
     try {
-      if (!apiKeyInput.value.trim()) {
+      if (!apiKeyInput.value.trim() && !hasSavedApiKey) {
         setModelOptions([selectedModel()], selectedModel());
         return;
       }
 
-      const response = await fetch("/api/chat-models", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          apiKey: apiKeyInput.value
-        })
-      });
+      const response = apiKeyInput.value.trim()
+        ? await fetch("/api/chat-models", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json"
+            },
+            body: JSON.stringify({ apiKey: apiKeyInput.value })
+          })
+        : await fetch("/api/chat-models");
       const payload = await response.json();
 
       if (!response.ok) {
@@ -681,6 +740,7 @@ export function initChat({ mount, onToolEvent } = {}) {
 
   async function sendChatMessage(event) {
     event.preventDefault();
+    stopVoiceCapture({ discardAudio: true });
 
     const text = chatInput.value.trim();
 
@@ -688,7 +748,7 @@ export function initChat({ mount, onToolEvent } = {}) {
       return;
     }
 
-    if (!apiKeyInput.value.trim()) {
+    if (!apiKeyInput.value.trim() && !hasSavedApiKey) {
       appendChatMessage("error", "OpenAI API key is required.");
       apiKeyInput.focus();
       return;
@@ -712,6 +772,7 @@ export function initChat({ mount, onToolEvent } = {}) {
       const reply = payload.message || "Done.";
       appendToolEvents(payload.toolEvents, pending);
       setChatMessageText(pending, reply);
+      setTokenUsageFooter(pending, payload.usage);
       chatMessages.push({ role: "assistant", content: reply });
       speak(reply);
     } catch (error) {
@@ -723,7 +784,7 @@ export function initChat({ mount, onToolEvent } = {}) {
       setChatMessageText(pending, error instanceof Error ? error.message : "Chat request failed.");
     } finally {
       sendChat.disabled = false;
-      listenButton.disabled = voiceMode === "none";
+      listenButton.disabled = voiceMode === "none" || recordingStarting || recordingStopping;
       chatInput.focus();
     }
   }
@@ -759,6 +820,34 @@ export function initChat({ mount, onToolEvent } = {}) {
     listenButton.setAttribute("aria-pressed", "false");
     listenButton.title = voiceMode === "recording" ? "Record" : "Listen";
     listenButton.setAttribute("aria-label", voiceMode === "recording" ? "Record" : "Listen");
+  }
+
+  function releaseMediaStream() {
+    stopMediaStreamTracks(mediaStream);
+    mediaStream = null;
+  }
+
+  function stopVoiceCapture({ discardAudio = false } = {}) {
+    captureVersion += 1;
+
+    if (voiceMode === "speech" && isListening) {
+      stopSpeechRecognition(recognition, true);
+    }
+
+    if (discardAudio && mediaRecorder) {
+      discardRecording = true;
+    }
+
+    if (mediaRecorder?.state === "recording") {
+      discardRecording = discardAudio;
+      recordingStopping = true;
+      listenButton.disabled = true;
+      mediaRecorder.stop();
+    }
+
+    releaseMediaStream();
+    resetListenButton();
+    listenButton.disabled = voiceMode === "none" || recordingStarting || recordingStopping;
   }
 
   function setupSpeechRecognition() {
@@ -815,6 +904,7 @@ export function initChat({ mount, onToolEvent } = {}) {
       resetListenButton();
     });
     recognition.addEventListener("error", (event) => {
+      resetListenButton();
       const message =
         event.error === "not-allowed"
           ? "Microphone permission was denied by the browser."
@@ -826,7 +916,8 @@ export function initChat({ mount, onToolEvent } = {}) {
       listenButton.title = message;
     });
     recognition.addEventListener("result", (event) => {
-      const transcript = Array.from(event.results)
+      const results = Array.from(event.results);
+      const transcript = results
         .map((result) => result[0]?.transcript ?? "")
         .join("")
         .trim();
@@ -834,10 +925,18 @@ export function initChat({ mount, onToolEvent } = {}) {
       if (transcript) {
         chatInput.value = transcript;
       }
+
+      if (results.some((result) => result.isFinal)) {
+        stopVoiceCapture();
+      }
     });
   }
 
   async function startRecording() {
+    if (recordingStarting || recordingStopping || mediaRecorder) {
+      return;
+    }
+
     if (!apiKeyInput.value.trim()) {
       listenStatus.textContent = "OpenAI API key is required for Safari microphone transcription.";
       apiKeyInput.focus();
@@ -845,10 +944,21 @@ export function initChat({ mount, onToolEvent } = {}) {
     }
 
     try {
+      recordingStarting = true;
+      listenButton.disabled = true;
+      const requestVersion = captureVersion;
       stopSpeaking();
       listenStatus.textContent = "";
       audioChunks = [];
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      discardRecording = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      if (requestVersion !== captureVersion || document.hidden) {
+        stopMediaStreamTracks(stream);
+        return;
+      }
+
+      mediaStream = stream;
       const mimeType = preferredAudioMimeType(window.MediaRecorder);
       mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
       mediaRecorder.addEventListener("dataavailable", (event) => {
@@ -857,10 +967,20 @@ export function initChat({ mount, onToolEvent } = {}) {
         }
       });
       mediaRecorder.addEventListener("stop", () => {
-        const tracks = mediaStream?.getTracks?.() ?? [];
-        tracks.forEach((track) => track.stop());
-        mediaStream = null;
-        const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || mimeType || "audio/webm" });
+        releaseMediaStream();
+        const stoppedRecorder = mediaRecorder;
+        mediaRecorder = null;
+        recordingStopping = false;
+        resetListenButton();
+        listenButton.disabled = voiceMode === "none";
+
+        if (discardRecording) {
+          discardRecording = false;
+          audioChunks = [];
+          return;
+        }
+
+        const blob = new Blob(audioChunks, { type: stoppedRecorder?.mimeType || mimeType || "audio/webm" });
         audioChunks = [];
 
         if (blob.size === 0) {
@@ -894,16 +1014,20 @@ export function initChat({ mount, onToolEvent } = {}) {
       listenButton.title = "Stop recording";
       listenButton.setAttribute("aria-label", "Stop recording");
     } catch (error) {
+      releaseMediaStream();
+      mediaRecorder = null;
       resetListenButton();
       listenStatus.textContent = error instanceof Error ? error.message : "Could not start microphone.";
+    } finally {
+      recordingStarting = false;
+      listenButton.disabled = voiceMode === "none" || recordingStopping;
     }
   }
 
   function toggleListening() {
     if (voiceMode === "recording") {
       if (mediaRecorder?.state === "recording") {
-        mediaRecorder.stop();
-        resetListenButton();
+        stopVoiceCapture();
         return;
       }
 
@@ -916,17 +1040,17 @@ export function initChat({ mount, onToolEvent } = {}) {
     }
 
     if (isListening) {
-      recognition.stop();
+      stopVoiceCapture();
       return;
     }
 
     try {
       stopSpeaking();
       listenStatus.textContent = "";
+      isListening = true;
       recognition.start();
     } catch (error) {
-      isListening = false;
-      listenButton.classList.remove("listening");
+      resetListenButton();
       listenStatus.textContent = error instanceof Error ? error.message : "Could not start microphone.";
     }
   }
@@ -943,6 +1067,12 @@ export function initChat({ mount, onToolEvent } = {}) {
     }
   });
   listenButton.addEventListener("click", toggleListening);
+  window.addEventListener("pagehide", () => stopVoiceCapture({ discardAudio: true }));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopVoiceCapture({ discardAudio: true });
+    }
+  });
   clearChatButton.addEventListener("click", clearChatHistory);
   refreshModelsButton.addEventListener("click", loadAvailableModels);
   speakReplies.addEventListener("change", () => {

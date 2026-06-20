@@ -7,6 +7,7 @@ type McpToolDefinitionInput<Args> = {
   name?: string;
   title?: string;
   description?: string;
+  _meta?: Record<string, unknown>;
   inputSchema: z.ZodRawShape;
   handler: (args: Args) => Promise<unknown>;
 };

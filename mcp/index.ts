@@ -8,7 +8,7 @@ import { registerMcpTools } from "./mcp-tools.js";
 const server = new McpServer(
   {
     name: "microsmcp",
-    version: "1.0.0"
+    version: "1.1.0"
   },
   {
     instructions: await loadMcpInstructions()

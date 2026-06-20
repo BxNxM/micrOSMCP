@@ -12,12 +12,14 @@ This repository is a TypeScript MCP server with a small local tester UI. Keep th
 - `mcp/tool-loader.ts` owns dynamic tool discovery from `mcp/tools/`.
 - `mcp/tool-registry.ts` is a compatibility export for loaded tool definitions.
 - `mcp/tool-definition.ts` owns the shared `McpToolDefinition` type and file-backed description loading.
+- `mcp/function-docs.ts` owns optional response enrichment from the static module/function reference manual.
 - `mcp/tools/common.ts` owns shared micrOS infrastructure: cache access, device selection helpers, TCP socket client, discovery helpers, output parsers, and concurrency helpers.
 - `mcp/tools/<tool-name>.ts` owns one tool's input type, Zod schema, exported business function, and exported tool definition. The file basename is converted to the MCP tool name and title.
 - `mcp/tools/<tool-name>.md` owns that tool's MCP description and is loaded automatically by `defineTool(import.meta.url, ...)`.
 - `ui/` owns the local tester web app, including its server bridge and static assets. It should consume MCP schemas instead of duplicating tool knowledge.
+- `ui/assets/tool-form.js` owns generic schema-default and presentation-hint handling for generated tool forms.
 - `ui/chat-system-prompt.md` owns the tester chat's system prompt and is loaded by `ui/chat-bridge.ts`.
-- `data/` owns local runtime state such as the device cache and optional tester UI chat config.
+- `data/` owns local runtime state such as connection data, discovered capabilities, user notes, certificates, and optional tester UI chat config. The tracked `data/sfuncman.json` is static function reference metadata, not runtime state.
 - `scripts/` contains operational entrypoints and checks. Keep scripts protocol-safe when used by stdio MCP clients.
 
 ## High-Level Architecture
@@ -121,6 +123,17 @@ Separation rules:
 - UI-only concerns such as HTTPS certificates, browser assets, OpenAI chat orchestration, and chat preferences stay under `ui/` and `data/`.
 - Adding a tool must not require changes in the UI; MCP discovery and exposed schemas drive both tool forms and chat tool calling.
 
+## Shared Contracts
+
+- Device identity has one response shape across tools. Keep stable identity, address, display name, note, and optional status fields at the device level instead of duplicating them inside feature payloads.
+- Each persisted fact has one canonical owner. Connection data owns device identity and addressing, feature data owns discovered capabilities, and notes own user-authored context.
+- Cache readers may normalize legacy formats, but writers must emit only the current canonical format. Migration tests should verify both the in-memory result and the rewritten file.
+- Do not expose local cache paths or duplicate raw persistence objects in tool responses.
+- Put input defaults and validation in MCP Zod schemas. The UI should consume generated JSON Schema defaults rather than maintain a parallel table of tool values.
+- Optional UI presentation hints belong in tool `_meta` under the project namespace. Form rendering must interpret those hints generically and must not branch on tool names.
+- Browser media capture must have one teardown path. Explicit stop, final results, errors, clear/send actions, tab hiding, and page exit must abort recognition or stop every media track before resetting UI state.
+- Tester UI API routes must enforce bounded request bodies and keep persisted secrets out of browser-facing configuration responses. Native and Docker UI modes intentionally support trusted-LAN access without authentication.
+
 ## Adding A Tool
 
 1. Add `mcp/tools/<tool-name>.ts`.
@@ -143,7 +156,9 @@ Separation rules:
 
 - Keep MCP schema descriptions concise and human-readable; they appear in clients and in the tester UI.
 - Do not duplicate schema metadata in the UI. The UI should render what MCP exposes.
+- Keep UI helpers capability-based and metadata-driven; do not encode individual tool names in generic adapters.
 - Keep reusable micrOS protocol behavior in `mcp/tools/common.ts`; keep tool-specific orchestration in the tool file.
+- Keep persisted discovery data compact. Enrich outward-facing responses from static reference metadata instead of duplicating that metadata in runtime caches.
 - Add comments only around non-obvious protocol behavior, socket lifecycle, or safety-sensitive command behavior.
 - Preserve the stdio contract: MCP mode must not print non-protocol helper text to stdout.
 - Prefer `npm run start:test` for the minimal local verification pass.

@@ -1,1 +1,1 @@
-Add, replace, append, or clear a persistent note for one cached micrOS device. Notes are stored separately from discovered features and survive rediscovery.
+Read or update persistent context for one cached device, such as its location, attached hardware, or purpose. Target by UID, IP, or an unambiguous name fragment. Omit `note` or pass an empty string to read without changing it; otherwise `mode` replaces the note by default or appends a new line. Empty input does not clear an existing note. Notes survive device and capability rediscovery.

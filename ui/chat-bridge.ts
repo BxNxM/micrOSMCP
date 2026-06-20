@@ -1,5 +1,5 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export async function loadChatSystemPrompt(promptUrl?: URL) {
@@ -42,10 +42,41 @@ type TranscribeRequestBody = {
   audio?: unknown;
 };
 
+export type ChatTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+};
+
+function tokenCount(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
+}
+
+export function addTokenUsage(current: ChatTokenUsage, rawUsage: unknown): ChatTokenUsage {
+  if (!rawUsage || typeof rawUsage !== "object" || Array.isArray(rawUsage)) {
+    return current;
+  }
+
+  const usage = rawUsage as Record<string, unknown>;
+  const inputTokens = tokenCount(usage.prompt_tokens);
+  const outputTokens = tokenCount(usage.completion_tokens);
+  const reportedTotal = tokenCount(usage.total_tokens);
+
+  return {
+    inputTokens: current.inputTokens + inputTokens,
+    outputTokens: current.outputTokens + outputTokens,
+    totalTokens: current.totalTokens + (reportedTotal || inputTokens + outputTokens)
+  };
+}
+
 export type ChatConfig = {
   apiKey: string;
   model: string;
   speakReplies: boolean;
+};
+
+export type PublicChatConfig = Omit<ChatConfig, "apiKey"> & {
+  hasApiKey: boolean;
 };
 
 export const chatConfigPath =
@@ -83,7 +114,32 @@ export async function saveChatConfig(input: unknown): Promise<ChatConfig> {
   const config = normalizeChatConfig(input);
   await mkdir(dirname(chatConfigPath), { recursive: true });
   await writeFile(chatConfigPath, `${JSON.stringify(config, null, 2)}\n`);
+  await chmod(chatConfigPath, 0o600);
   return config;
+}
+
+function publicChatConfig(config: ChatConfig): PublicChatConfig {
+  return {
+    model: config.model,
+    speakReplies: config.speakReplies,
+    hasApiKey: config.apiKey.length > 0
+  };
+}
+
+export async function readPublicChatConfig(): Promise<PublicChatConfig> {
+  return publicChatConfig(await readChatConfig());
+}
+
+export async function savePublicChatConfig(input: unknown): Promise<PublicChatConfig> {
+  const existing = await readChatConfig();
+  const candidate = input && typeof input === "object" && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
+  const apiKey = typeof candidate.apiKey === "string" && candidate.apiKey.trim()
+    ? candidate.apiKey.trim()
+    : existing.apiKey;
+  const saved = await saveChatConfig({ ...candidate, apiKey });
+  return publicChatConfig(saved);
 }
 
 function isLikelyLlmModel(id: string) {
@@ -299,6 +355,7 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
     ...incomingMessages
   ];
   const toolEvents: unknown[] = [];
+  let usage: ChatTokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
   for (let step = 0; step < 4; step += 1) {
     const completion = await openAiChatCompletion(apiKey, {
@@ -307,6 +364,7 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
       tools,
       tool_choice: "auto"
     });
+    usage = addTokenUsage(usage, completion?.usage);
     const assistantMessage = completion?.choices?.[0]?.message;
 
     if (!assistantMessage) {
@@ -318,7 +376,8 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
     if (!Array.isArray(assistantMessage.tool_calls) || assistantMessage.tool_calls.length === 0) {
       return {
         message: assistantMessage.content ?? "",
-        toolEvents
+        toolEvents,
+        usage: usage.totalTokens > 0 ? usage : null
       };
     }
 
@@ -354,6 +413,7 @@ export async function createChatReply(client: Client, body: ChatRequestBody) {
 
   return {
     message: "Stopped after multiple tool calls. Please narrow the request and try again.",
-    toolEvents
+    toolEvents,
+    usage: usage.totalTokens > 0 ? usage : null
   };
 }

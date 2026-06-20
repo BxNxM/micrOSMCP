@@ -3,8 +3,8 @@
 .agents
 dist
 node_modules
-data/
-data/**
+data/*
+!data/sfuncman.json
 npm-debug.log
 Dockerfile
 *.tar

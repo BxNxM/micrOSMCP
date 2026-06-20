@@ -17,7 +17,7 @@ Standalone TypeScript MCP server and browser tester UI for micrOS devices. Use i
 - [Tools](#tools)
   - [`run_command`](#tool-run-command)
   - [`set_device_note`](#tool-set-device-note)
-  - [`filter_devices`](#tool-filter-devices)
+  - [`search_devices`](#tool-search-devices)
   - [`discover_devices`](#tool-discover-devices)
   - [`discover_commands`](#tool-discover-commands)
 - [How Tools Are Defined](#how-tools-are-defined)
@@ -35,12 +35,14 @@ npm install
 npm run start:ui
 ```
 
-Open one of the printed URLs. The UI binds on all interfaces by default and prints localhost plus any detected LAN addresses, such as:
+Open one of the URLs printed at startup. The native tester binds on all interfaces and prints localhost plus detected LAN addresses:
 
 ```text
 https://127.0.0.1:3333
 https://10.0.1.42:3333
 ```
+
+The tester has no authentication layer. Localhost and LAN clients can use every UI API directly, including persisted server-side API-key detection and MCP tools. Run it only on a trusted network, or set `HOST=127.0.0.1` to restrict access to the local machine. Each AI assistant response shows a compact footer with aggregate input, output, and total token usage, including all model calls made during its tool loop.
 
 The UI is the easiest way to verify everything locally. It includes an optional AI chat panel for testing the MCP tools with an OpenAI API key, plus manual tool forms that render schemas, keep JSON arguments editable, and give device dropdowns for device-targeted tools.
 
@@ -56,7 +58,9 @@ MICROS_UI_CERT_HOSTS=gateway.local,10.0.1.42 npm run start:ui
 
 The hostname must resolve to the UI host from the client device. Changing this list or the detected addresses regenerates the certificate, so clients must accept or trust the replacement certificate. The UI always uses HTTPS, even when `MICROS_UI_CERT_HOSTS` is omitted; it never falls back to HTTP. Browsers with speech recognition use live dictation; Safari falls back to recording audio and transcribing it with the saved OpenAI API key.
 
-The AI chat API key, selected model, and Speak setting are saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse them. Override that path with `MICROS_CHAT_CONFIG_PATH` if you want to keep the API key somewhere else. The model dropdown loads available LLM-style OpenAI models for the saved API key. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
+Stopping dictation immediately aborts browser speech recognition. A final dictation result, chat send or clear, tab hiding, and page exit also release capture. The recording fallback stops every media track before transcription, so the browser microphone indicator should turn off as soon as capture ends.
+
+The AI chat API key, selected model, and Speak setting are saved locally by the UI server in `data/ui_chat_config.json` so reloads can reuse them. The saved key remains server-side: browser configuration responses expose only whether a key exists, never the key itself. Override the config path with `MICROS_CHAT_CONFIG_PATH` if needed. The model dropdown loads available LLM-style OpenAI models using the saved key. Browser speech recognition and speech synthesis are used for the optional listen/speak controls when the current browser supports them.
 
 <a id="mcp-client"></a>
 ## Use With An MCP Client
@@ -115,6 +119,7 @@ npm run start                 # Start stdio MCP server from dist/
 npm run start:test            # Build and run minimal MCP/tool contract tests
 npm run start -- ui           # Start UI from dist/ without rebuilding
 npm run start:mcp             # Explicit stdio MCP mode
+MICROS_INITIALIZE_ON_START=0 npm run start:mcp  # MCP mode without startup discovery or feature scan
 npm run start:ui              # Build, then start the browser tester UI
 npm run docker:build          # Build and export Docker image tar
 ```
@@ -131,8 +136,10 @@ Useful environment variables:
 MICROS_DEVICE_CACHE_PATH=/path/to/device_conn_cache.json npm run start
 MICROS_DEVICE_FEATURE_CACHE_PATH=/path/to/device_feature_cache.json npm run start
 MICROS_DEVICE_NOTES_CACHE_PATH=/path/to/device_notes_cache.json npm run start
+MICROS_FUNCTION_MANUAL_PATH=/path/to/sfuncman.json npm run start
 MICROS_NETWORK_PREFIX=10.0.1 npm run start
 MICROS_CHAT_CONFIG_PATH=/path/to/ui_chat_config.json npm run start -- ui
+MICROS_UI_MAX_BODY_BYTES=12582912 npm run start -- ui
 HOST=0.0.0.0 PORT=3333 npm run start -- ui
 ```
 
@@ -143,12 +150,12 @@ The MCP server exposes six tools.
 
 | Tool | Purpose |
 | --- | --- |
-| `filter_devices` | Main device selection tool: filter cached devices by name, UID, IP, note, module, function, command, feature text, and optional live status. Feature-query results are pruned to relevant modules. |
+| `search_devices` | Primary device and feature lookup before command execution. Search cached identity, notes, modules, complete function signatures, and optional live status. |
 | `list_devices` | Return a compact cached device inventory with device identity, note, and known module names only. |
 | `discover_devices` | Run a fresh `/24` network discovery, update the device cache, and refresh cached features for discovered devices. |
 | `run_command` | Run a command or command pipeline on one selected device. |
-| `set_device_note` | Add, append, replace, or clear persistent notes for a cached device. |
-| `discover_commands` | Run `modules`, then `<module> help`, to map and cache a device's command surface. |
+| `set_device_note` | Read, append, or replace the persistent note for a cached device. |
+| `discover_commands` | Run `modules`, then `<module> help >json`, to map and cache a device's command surface. |
 
 <a id="tool-run-command"></a>
 ### `run_command`
@@ -173,6 +180,32 @@ Array pipeline:
 
 Use read-only commands such as `version` for smoke tests. Other micrOS commands may change device state.
 
+Commands pass through a denial policy before device lookup or socket execution. Configuration reads such as `conf` and `conf webui` are allowed. Configuration writes are denied in direct and pipeline forms, including `conf webui true`, `conf<a>webui true`, and the equivalent array representation. Controlled denials return `ok: false`, the matching policy `rule`, and `deniedCommand`.
+
+When the first word of the first command exactly matches a cached module name, case-insensitively, the response includes an optional `moduleHint`. It contains that module's complete cached function list with signatures and available `sfuncman.json` documentation:
+
+```json
+{
+  "moduleHint": {
+    "matchedCommands": ["dht22"],
+    "modules": [
+      {
+        "name": "dht22",
+        "functions": [
+          {
+            "name": "measure",
+            "signature": "measure log=False",
+            "doc": "Measure with dht22"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hint is derived from cached discovery data and may be present in both successful and failed command responses. It is omitted unless the first token of the first command matches a module exactly; a module appearing only in a later pipeline command does not produce a hint.
+
 <a id="tool-set-device-note"></a>
 ### `set_device_note`
 
@@ -186,10 +219,10 @@ Store persistent context about a device, such as location, attached peripherals,
 }
 ```
 
-Use `mode: "append"` to add a line without replacing existing notes, or `mode: "clear"` to remove the note. Notes are stored by device name in `data/device_notes_cache.json`, survive feature rediscovery, and are shown by `list_devices` and `filter_devices`.
+Use `mode: "append"` to add a line without replacing the existing note. Omit `note` or send an empty value to return the current note without changing it. Notes are stored by device name in `data/device_notes_cache.json`, survive feature rediscovery, and are shown by `list_devices` and `search_devices`.
 
-<a id="tool-filter-devices"></a>
-### `filter_devices`
+<a id="tool-search-devices"></a>
+### `search_devices`
 
 Use this as the primary device selection tool when you know part of a device name or part of a capability:
 
@@ -199,16 +232,31 @@ Use this as the primary device selection tool when you know part of a device nam
 }
 ```
 
-The query matches cached device identity fields, persistent device notes, and cached feature metadata, including module names, function names, command signatures, parameters, and raw help text. Matching devices include `deviceNote` plus cached `features` when available. If the query matches the device identity, full features are returned; if it matches a note, feature, module, or command, irrelevant modules and commands are removed to keep context compact.
+The query searches cached device identity fields, persistent device notes, and cached feature metadata, including module names and complete function signatures. Set `fuzziness` to `0` for literal substring matching, `1` for conservative typo tolerance (the default), or `2` for broader matching. Very short queries remain strict at the lower levels to avoid noisy results.
 
-Check live status while filtering:
+Multi-word searches use two passes. The complete query is tried first and its results are returned when any device matches. If it returns no devices, the tool retries with each individual word and returns devices matching any word. The response reports `matchMode` as `query` or `words` and lists the effective `matchedTerms`.
+
+For each matching device, modules are selected using both the active query terms and words longer than two characters from its device note. Irrelevant modules are removed, while every selected module retains its complete function signatures. Each returned function also includes `name` and, when found in `data/sfuncman.json`, `doc`.
+
+Common use cases:
+
+- Device identity: `{"query":"TerraceSensor","fuzziness":0}` for a precise name, UID, or IP fragment.
+- Capability: `{"query":"brightness"}` to find devices whose cached module signatures expose brightness control.
+- Persistent context: `{"query":"outdoor temperature"}` to search device notes as a phrase, then as `outdoor` or `temperature` only when the phrase has no matches.
+- Misspelling recovery: `{"query":"temprature","fuzziness":1}` for conservative typo tolerance.
+- Broad recovery: `{"query":"kitchn diming","fuzziness":2}` when multiple words may be misspelled.
+- Live availability: add `"status":"online"` to return only currently reachable matches.
+
+Require live status while searching:
 
 ```json
 {
   "query": "Terrace",
-  "includeStatus": true
+  "status": "online"
 }
 ```
+
+In the tester UI, status defaults to `Any`; choosing `online` or `offline` performs live TCP checks only for cached devices matching the text query.
 
 <a id="tool-discover-devices"></a>
 ### `discover_devices`
@@ -240,7 +288,7 @@ All cached devices:
 {}
 ```
 
-One device by UID, FUID, IP, or partial device name:
+One device by UID, IP, or partial device name:
 
 ```json
 {
@@ -248,17 +296,26 @@ One device by UID, FUID, IP, or partial device name:
 }
 ```
 
-The response includes per-module raw help plus a flattened `commands` list:
+The feature cache stores each module once with compact signature strings. The response expands each function with its parsed name and optional reference documentation:
 
 ```json
 {
-  "module": "gameOfLife",
-  "function": "load",
-  "parameters": ["w=32", "h=16", "custom=None"],
-  "command": "gameOfLife load w=32 h=16 custom=None",
-  "signature": "load w=32 h=16 custom=None"
+  "name": "gameOfLife",
+  "functions": [
+    {
+      "name": "load",
+      "signature": "load w=32 h=16 custom=None",
+      "doc": "Load an initial state."
+    },
+    {
+      "name": "next_gen",
+      "signature": "next_gen w=32 h=16 raw=False"
+    }
+  ]
 }
 ```
+
+Discovery requests `<module> help >json` and parses the returned JSON signature array, with a text fallback for older firmware. Response documentation is matched by module name and the first word of each signature; lookup is case-insensitive as a fallback. A missing manual, module, function, null doc, or invalid manual does not fail the tool: the `doc` field is simply omitted. Override the manual path with `MICROS_FUNCTION_MANUAL_PATH`. Legacy caches containing raw help and flattened commands are normalized into the compact structure when read. Each discovery result uses the same top-level `uid`, `ip`, `port`, `deviceName`, and `deviceNote` fields as other device tools.
 
 Use `password` if the device requires micrOS app authentication.
 
@@ -357,14 +414,18 @@ Cache format:
 
 ```json
 {
-  "device_uid": ["ip-address", 9008, "device-fuid"]
+  "device_uid": {
+    "ip": "ip-address",
+    "port": 9008,
+    "deviceName": "device-name"
+  }
 }
 ```
 
 If the cache is missing or invalid, the server creates it with these defaults:
 
-- `__devuid__`: `192.168.4.1`, port `9008`, FUID `__device_on_AP__`
-- `__localhost__`: `127.0.0.1`, port `9008`, FUID `__simulator__`
+- `__devuid__`: `192.168.4.1`, port `9008`, device name `__device_on_AP__`
+- `__localhost__`: `127.0.0.1`, port `9008`, device name `__simulator__`
 
 The first cache read also attempts one automatic discovery and continues with whatever cache is available. Discovery is additive: it updates discovered devices but does not delete stale cached entries.
 
@@ -374,7 +435,8 @@ At MCP startup, the server runs an initialization pass that scans for devices, t
 data/device_feature_cache.json
 ```
 
-Feature cache entries include the readable `deviceName` for quick inspection. User notes are not stored there.
+Feature cache entries contain only discovery data. Device names remain in the connection cache, and user notes remain in the notes cache, avoiding duplicated fields across runtime files.
+Legacy three-element connection arrays and feature records with duplicated metadata are migrated and overwritten in the compact format when read.
 
 Persistent user notes are stored separately by device name in:
 
@@ -382,7 +444,9 @@ Persistent user notes are stored separately by device name in:
 data/device_notes_cache.json
 ```
 
-`list_devices` stays compact: it includes device identity, persistent notes, and known module names, but not function-level feature details. Use `filter_devices` for targeted feature lookup and `discover_commands` for full module/function details. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
+Optional function documentation is read from the static `data/sfuncman.json` reference file. It enriches `search_devices`, `discover_commands`, and command module hints without being copied into the feature cache.
+
+`list_devices` stays compact: it includes device identity, persistent notes, and known module names, but not function-level feature details. Use `search_devices` as the normal device and capability lookup before `run_command`, and `discover_commands` when cached module/function details need refreshing. Startup progress is logged to stderr so MCP stdout remains protocol-safe while clients can show that discovery is pending. Set `MICROS_INITIALIZE_ON_START=0` to skip startup initialization, for example when you need the stdio server to start without touching the network.
 
 <a id="docker"></a>
 ## Docker
@@ -466,16 +530,16 @@ docker run --rm -p 3333:3333 -e MICROS_NETWORK_PREFIX=10.0.1 -e MICROS_UI_CERT_H
 
 Image contents:
 
-- Included: compiled MCP server in `dist/mcp`, compiled optional UI server in `dist/ui`, UI static assets in `ui/assets`, `scripts/start.mjs`, `package.json`, and production `node_modules`.
+- Included: compiled MCP server in `dist/mcp`, compiled optional UI server in `dist/ui`, UI static assets in `ui/assets`, the static function manual, `scripts/start.mjs`, `package.json`, and production `node_modules`.
 - Generated at runtime: `/app/data`. The image creates this as an empty directory.
-- Excluded from the Docker build context: local `data/` contents, `dist/`, `node_modules/`, Git metadata, and local archive files. Device caches, device notes, and optional UI chat config files are sensitive runtime data and are not copied from the local checkout into the image.
+- Excluded from the Docker build context: runtime files under `data/`, `dist/`, `node_modules/`, Git metadata, and local archive files. Only `data/sfuncman.json` is admitted as static reference data; device caches, device notes, certificates, and optional UI chat config files are not copied from the local checkout into the image.
 
 Docker network notes:
 
 - Native mode: the server auto-detects the active local IPv4 prefix and logs it as `native/auto-detected`.
 - Docker mode: pass `MICROS_NETWORK_PREFIX` and the server logs it as `containerized/injected`.
 - If Docker still cannot find devices, confirm the container can route TCP traffic to micrOS devices on port `9008`. Docker Desktop, host firewalls, VPNs, or Wi-Fi client isolation can block this even when the prefix is correct.
-- The UI binds to `0.0.0.0:3333` with HTTPS in native and Docker modes. Omitting `MICROS_UI_CERT_HOSTS` does not enable HTTP.
+- Native and Docker UI modes bind to `0.0.0.0:3333` by default so LAN access and published container ports work consistently. The tester has no authentication; expose it only on trusted networks, or override native mode with `HOST=127.0.0.1`. Omitting `MICROS_UI_CERT_HOSTS` does not enable HTTP.
 - A container normally sees its own addresses rather than the Docker host's LAN address. Add every host LAN IP or DNS name used by clients to `MICROS_UI_CERT_HOSTS`, such as `gateway.local,10.0.1.42`.
 - Ensure names such as `gateway.local` resolve to the Docker host, then open `https://gateway.local:3333`. Without a matching certificate entry, browsers report a hostname mismatch.
 - Mount `/app/data` as a persistent volume to reuse the generated certificate across container restarts and avoid unnecessary certificate warnings.
@@ -519,8 +583,8 @@ The implementation mirrors the useful behavior of micrOS `socketClient.py` and `
 Project structure:
 
 - `mcp/`: standalone MCP stdio server. This owns tool registration, tool definitions, micrOS socket/discovery helpers, and the public tool barrel.
-- `ui/`: tester mini app. This owns the local HTTP bridge, optional AI chat bridge, and static browser assets under `ui/assets/`.
-- `data/`: local runtime state. The device cache and optional UI chat config live here by default and are ignored by git.
+- `ui/`: tester mini app. This owns the local HTTPS bridge, optional AI chat bridge, and static browser assets under `ui/assets/`.
+- `data/`: local runtime state plus the tracked static `sfuncman.json` function reference. Connection, feature, note, certificate, and optional UI chat config files live here by default and are ignored by git.
 - `scripts/`: operational entrypoints for start modes, Docker image export, and minimal tests.
 - `Dockerfile`: minimal runtime image for stdio MCP or the tester UI endpoint.
 

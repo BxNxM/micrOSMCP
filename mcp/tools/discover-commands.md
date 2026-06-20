@@ -1,1 +1,1 @@
-Discover and cache available micrOS modules/functions by running modules, then <module> help, on all cached devices or one selected device.
+Refresh cached module and function signatures by querying live devices with `modules` and `<module> help >json`. Omit `deviceTag` to inspect every cached device, or provide a UID, IP, or name fragment to inspect matching devices. Use when capability data is missing or stale; failures are reported per device, and successful results replace that device's cached feature data while preserving its note.

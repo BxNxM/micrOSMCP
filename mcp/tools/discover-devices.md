@@ -1,1 +1,1 @@
-Run a fresh network discovery for micrOS devices, update the device cache, then refresh cached module/function features for discovered devices. Returns a compact refresh summary.
+Scan a local IPv4 `/24` range for live micrOS devices and add or update them in the device cache. By default, also refresh module/function data for devices found in this scan; set `refreshFeatures` to false for address discovery only. Use when a device is absent or its address may have changed. Existing cached devices that are not found are retained.

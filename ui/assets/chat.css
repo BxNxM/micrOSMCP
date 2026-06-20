@@ -199,6 +199,16 @@
   justify-self: start;
 }
 
+.chat-token-usage {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: right;
+}
+
 .chat-message.tool {
   justify-self: start;
   max-width: 100%;

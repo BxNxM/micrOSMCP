@@ -1,4 +1,5 @@
 import { initChat } from "./chat.js";
+import { defaultValueFromSchema, includeBooleanArgument, showToolParameter } from "./tool-form.js";
 
 const toolList = document.querySelector("#toolList");
 const toolCount = document.querySelector("#toolCount");
@@ -70,10 +71,16 @@ async function refreshDevices() {
   }
 }
 
-function defaultValueFor(name, schema, toolName) {
+function defaultValueFor(name, schema) {
+  const schemaDefault = defaultValueFromSchema(schema);
+
+  if (schemaDefault !== undefined) {
+    return schemaDefault;
+  }
+
   if (name === "deviceTag") {
     const preferredDevice = devices.find((device) => !String(device.uid).startsWith("__")) ?? devices[0];
-    return preferredDevice?.fuid || preferredDevice?.uid || "__localhost__";
+    return preferredDevice?.deviceName || preferredDevice?.uid || "__localhost__";
   }
 
   if (name === "command") {
@@ -82,30 +89,6 @@ function defaultValueFor(name, schema, toolName) {
 
   if (name === "query") {
     return "Tiny";
-  }
-
-  if (name === "port") {
-    return 9008;
-  }
-
-  if (name === "timeout") {
-    return 10;
-  }
-
-  if (name === "timeoutMs") {
-    return 1000;
-  }
-
-  if (name === "concurrency") {
-    return toolName === "discover_commands" ? 3 : 50;
-  }
-
-  if (name === "startHost") {
-    return 2;
-  }
-
-  if (name === "endHost") {
-    return 254;
   }
 
   if (schema?.type === "boolean") {
@@ -122,7 +105,11 @@ function defaultArguments(tool) {
   const args = {};
 
   for (const [name, property] of Object.entries(properties)) {
-    const value = defaultValueFor(name, property, tool.name);
+    if (!showToolParameter(tool, name)) {
+      continue;
+    }
+
+    const value = defaultValueFor(name, property);
 
     if (required.has(name) || value !== "" && value !== false) {
       args[name] = value;
@@ -161,8 +148,8 @@ function createDeviceSelect(name, required, value) {
 
   for (const device of devices) {
     const option = document.createElement("option");
-    option.value = device.fuid || device.uid || device.ip;
-    option.textContent = `${device.fuid || device.uid} (${device.ip})`;
+    option.value = device.deviceName || device.uid || device.ip;
+    option.textContent = `${device.deviceName || device.uid} (${device.ip})`;
     select.append(option);
   }
 
@@ -259,7 +246,7 @@ function collectFormArguments() {
     }
 
     if (schema.type === "boolean") {
-      if (field.checked || required.has(name)) {
+      if (includeBooleanArgument(schema, field.checked, required.has(name))) {
         args[name] = field.checked;
       }
       continue;
@@ -297,8 +284,9 @@ function renderParameterForm(tool) {
   const properties = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const defaults = defaultArguments(tool);
+  const visibleProperties = Object.entries(properties).filter(([name]) => showToolParameter(tool, name));
 
-  if (Object.keys(properties).length === 0) {
+  if (visibleProperties.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-params";
     empty.textContent = "No parameters.";
@@ -306,7 +294,7 @@ function renderParameterForm(tool) {
     return;
   }
 
-  for (const [name, property] of Object.entries(properties)) {
+  for (const [name, property] of visibleProperties) {
     const label = document.createElement("label");
     label.className = "param-field";
 

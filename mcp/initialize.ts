@@ -56,8 +56,7 @@ export async function initializeMicrOSState(input: InitializeMicrOSStateInput = 
       openHosts: deviceDiscovery.openHosts.length,
       discovered: deviceDiscovery.discovered.length,
       networkPrefix: deviceDiscovery.networkPrefix,
-      networkPrefixSource: deviceDiscovery.networkPrefixSource,
-      cachePath: deviceDiscovery.cachePath
+      networkPrefixSource: deviceDiscovery.networkPrefixSource
     },
     features: {
       ok: featureDiscovery.ok,

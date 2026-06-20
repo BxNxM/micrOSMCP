@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   cacheToDevices,
   type CachedDeviceFeatures,
-  type DiscoveredCommand,
   type DiscoveredModule,
   type Device,
   findDevices,
@@ -16,6 +15,7 @@ import {
   socketErrorMessage
 } from "./common.js";
 import { defineTool } from "../tool-definition.js";
+import { documentModules } from "../function-docs.js";
 
 export type DiscoverCommandsInput = {
   deviceTag?: string;
@@ -25,7 +25,7 @@ export type DiscoverCommandsInput = {
   concurrency?: number;
 };
 
-export type DeviceCommandDiscoverySuccess = Omit<CachedDeviceFeatures, "deviceName" | "deviceNote"> & {
+export type DeviceCommandDiscoverySuccess = Omit<CachedDeviceFeatures, "deviceNote"> & {
   ok: true;
   device: Device;
 };
@@ -33,7 +33,6 @@ export type DeviceCommandDiscoverySuccess = Omit<CachedDeviceFeatures, "deviceNa
 export type DeviceCommandDiscoveryFailure = {
   ok: false;
   device: Device;
-  modulesCommand: string;
   error: string;
 };
 
@@ -50,26 +49,13 @@ async function discoverDeviceCommands(
     const moduleLines = await client.sendCommand("modules");
     const modules = parseModules(moduleLines);
     const moduleDetails: DiscoveredModule[] = [];
-    const commands: DiscoveredCommand[] = [];
 
     for (const moduleName of modules) {
-      const helpLines = await client.sendCommand(`${moduleName} help`);
+      const helpLines = await client.sendCommand(`${moduleName} help >json`);
       const functions = parseModuleHelp(helpLines);
-
-      for (const fn of functions) {
-        commands.push({
-          module: moduleName,
-          function: fn.name,
-          parameters: fn.parameters,
-          command: `${moduleName} ${fn.signature}`,
-          signature: fn.signature
-        });
-      }
 
       moduleDetails.push({
         name: moduleName,
-        helpCommand: `${moduleName} help`,
-        rawHelp: helpLines,
         functions
       });
     }
@@ -78,16 +64,12 @@ async function discoverDeviceCommands(
       ok: true,
       device,
       discoveredAt: new Date().toISOString(),
-      modulesCommand: "modules",
-      rawModules: moduleLines,
-      modules: moduleDetails,
-      commands
+      modules: moduleDetails
     };
   } catch (error) {
     return {
       ok: false,
       device,
-      modulesCommand: "modules",
       error: socketErrorMessage(error)
     };
   } finally {
@@ -106,13 +88,9 @@ export async function saveSuccessfulFeatureDiscoveries(results: DeviceCommandDis
 
     const existingNote = cache[result.device.uid]?.deviceNote ?? "";
     cache[result.device.uid] = {
-      deviceName: result.device.fuid,
       deviceNote: existingNote,
       discoveredAt: result.discoveredAt,
-      modulesCommand: result.modulesCommand,
-      rawModules: result.rawModules,
-      modules: result.modules,
-      commands: result.commands
+      modules: result.modules
     };
     changed = true;
   }
@@ -123,7 +101,12 @@ export async function saveSuccessfulFeatureDiscoveries(results: DeviceCommandDis
 }
 
 export async function discoverCommandsForDevices(devices: Device[], input: DiscoverCommandsInput = {}) {
-  const results = await mapWithConcurrency(devices, input.concurrency ?? 3, (device) =>
+  const featureCache = await readDeviceFeatureCache();
+  const devicesWithNotes = devices.map((device) => ({
+    ...device,
+    deviceNote: featureCache[device.uid]?.deviceNote ?? device.deviceNote ?? ""
+  }));
+  const results = await mapWithConcurrency(devicesWithNotes, input.concurrency ?? 3, (device) =>
     discoverDeviceCommands(device, input)
   );
   await saveSuccessfulFeatureDiscoveries(results);
@@ -145,12 +128,22 @@ export async function discoverCommands(input: DiscoverCommandsInput = {}) {
   }
 
   const results = await discoverCommandsForDevices(devices, input);
+  const responseResults = await Promise.all(
+    results.map(async (result) =>
+      result.ok
+        ? {
+            ...result,
+            modules: await documentModules(result.modules)
+          }
+        : result
+    )
+  );
 
   return {
     ok: results.every((result) => result.ok),
     deviceTag: deviceTag ?? null,
     count: results.length,
-    devices: results
+    devices: responseResults
   };
 }
 
@@ -160,9 +153,9 @@ export const discoverCommandsTool = defineTool<DiscoverCommandsInput>(import.met
       .string()
       .optional()
       .describe(
-        "Optional device UID, FUID, IP address, or partial device name. Omit to discover commands on all cached devices."
+        "Optional device UID, IP address, or partial device name. Omit to inspect all cached devices."
       ),
-    timeout: z.number().int().positive().optional().describe("Socket timeout in seconds. Defaults to 10."),
+    timeout: z.number().int().positive().default(10).describe("Socket timeout in seconds. Defaults to 10."),
     password: z.string().optional().describe("Optional micrOS app password if auth is enabled."),
     verbose: z.boolean().optional().describe("Enable verbose micrOS client logging."),
     concurrency: z
@@ -170,7 +163,7 @@ export const discoverCommandsTool = defineTool<DiscoverCommandsInput>(import.met
       .int()
       .positive()
       .max(20)
-      .optional()
+      .default(3)
       .describe("Maximum devices to inspect in parallel when deviceTag is omitted. Defaults to 3.")
   },
   handler: discoverCommands
